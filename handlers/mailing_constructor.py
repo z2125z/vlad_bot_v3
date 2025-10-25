@@ -22,7 +22,7 @@ async def create_mailing_start(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.set_state(MailingConstructor.waiting_for_title)
-    await callback.message.edit_text(
+    await callback.message.answer(  # Используем answer вместо edit_text
         "📝 <b>Создание новой рассылки</b>\n\n"
         "Введите название рассылки:",
         reply_markup=get_back_keyboard("admin_mailings"),
@@ -51,7 +51,8 @@ async def mailing_get_text(message: Message, state: FSMContext):
         await message.answer("❌ Текст не может быть пустым.")
         return
         
-    await state.update_data(message_text=message.html_text or message.text)
+    text_content = message.html_text or message.text
+    await state.update_data(message_text=text_content)
     await state.set_state(MailingConstructor.waiting_for_media)
     
     await message.answer(
@@ -72,7 +73,7 @@ async def mailing_select_media_type(callback: CallbackQuery, state: FSMContext):
     else:
         media_names = {
             "photo": "🖼️ фото",
-            "video": "🎥 видео",
+            "video": "🎥 видео", 
             "document": "📎 документ",
             "voice": "🎤 голосовое сообщение",
             "video_note": "📹 видео-сообщение"
@@ -80,7 +81,7 @@ async def mailing_select_media_type(callback: CallbackQuery, state: FSMContext):
         
         await callback.message.edit_text(
             f"📎 Отправьте {media_names.get(media_type, 'медиа')} для рассылки:",
-            reply_markup=get_back_keyboard("create_mailing")
+            reply_markup=get_back_keyboard("admin_mailings")
         )
 
 # Получение медиа-файла
@@ -121,19 +122,16 @@ async def mailing_get_media(message: Message, state: FSMContext):
     else:
         await message.answer(f"❌ Вы отправили неверный тип медиа. Ожидается: {media_type}")
 
-# Пропуск медиа (если передумали)
-@router.message(MailingConstructor.waiting_for_media, F.text == "🔙 Назад")
-async def mailing_skip_media(message: Message, state: FSMContext):
-    await state.update_data(message_type="text", media_file_id=None)
-    await mailing_finalize(message, state)
-
-# Отмена создания рассылки
-@router.message(MailingConstructor.waiting_for_media, F.text == "❌ Отмена")
-async def mailing_cancel(message: Message, state: FSMContext):
+# Пропуск медиа (если передумали) - обработка кнопки "Назад"
+@router.callback_query(MailingConstructor.waiting_for_media, F.data == "admin_mailings")
+async def mailing_back_from_media(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "❌ Создание рассылки отменено.",
-        reply_markup=get_back_keyboard("admin_mailings")
+    from utils.helpers import get_mailings_keyboard
+    await callback.message.edit_text(
+        "📨 <b>Управление рассылками</b>\n\n"
+        "Выберите действие:",
+        reply_markup=get_mailings_keyboard(),
+        parse_mode="HTML"
     )
 
 # Финальный шаг - предпросмотр и сохранение
@@ -148,6 +146,14 @@ async def mailing_finalize(update, state: FSMContext):
         media_file_id=data.get('media_file_id'),
         status="draft"
     )
+    
+    if not mailing:
+        if update.__class__.__name__ == "CallbackQuery":
+            await update.message.answer("❌ Ошибка при создании рассылки")
+        else:
+            await update.answer("❌ Ошибка при создании рассылки")
+        await state.clear()
+        return
     
     await state.update_data(mailing_id=mailing.id)
     await state.set_state(MailingConstructor.waiting_for_confirmation)

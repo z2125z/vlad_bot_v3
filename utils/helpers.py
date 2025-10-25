@@ -106,6 +106,29 @@ def get_mailing_preview_keyboard(mailing_id: int):
 
 def format_stats_overview():
     """Форматирование общей статистики"""
+    try:
+        users_count = db.get_user_count()
+        active_today = db.get_active_users_count_today()
+        all_mailings = len(db.get_all_mailings())
+        active_mailings = len(db.get_mailings_by_status('active'))
+        
+        return f"""
+📊 <b>Общая статистика</b>
+
+👥 <b>Пользователи:</b>
+   • Всего: <b>{users_count}</b>
+   • Активных сегодня: <b>{active_today}</b>
+   • Активность: <b>{(active_today/users_count*100 if users_count > 0 else 0):.1f}%</b>
+
+📨 <b>Рассылки:</b>
+   • Всего: <b>{all_mailings}</b>
+   • Активных: <b>{active_mailings}</b>
+
+⏱️ <b>Обновлено:</b> {datetime.now().strftime('%H:%M %d.%m.%Y')}
+"""
+    except Exception as e:
+        return f"❌ Ошибка при загрузке статистики: {e}"
+    """Форматирование общей статистики"""
     users_count = db.get_user_count()
     active_today = db.get_active_users_count_today()
     all_mailings = len(db.get_all_mailings())
@@ -147,6 +170,36 @@ def format_users_stats():
 
 def format_mailings_stats():
     """Форматирование статистики рассылок"""
+    try:
+        all_mailings = db.get_all_mailings()
+        active_mailings = db.get_mailings_by_status('active')
+        draft_mailings = db.get_mailings_by_status('draft')
+        archived_mailings = db.get_mailings_by_status('archived')
+        
+        total_sent = 0
+        total_delivered = 0
+        
+        for mailing in all_mailings:
+            stats = db.get_mailing_stats(mailing.id)
+            total_sent += stats['total_sent']
+            total_delivered += stats['delivered']
+        
+        return f"""
+📨 <b>Статистика рассылок</b>
+
+📈 <b>Общее:</b>
+   • Всего рассылок: <b>{len(all_mailings)}</b>
+   • Активных: <b>{len(active_mailings)}</b>
+   • Черновиков: <b>{len(draft_mailings)}</b>
+   • В архиве: <b>{len(archived_mailings)}</b>
+
+📊 <b>Эффективность:</b>
+   • Всего отправлено: <b>{total_sent}</b>
+   • Доставлено: <b>{total_delivered}</b>
+   • Общий успех: <b>{(total_delivered/total_sent*100 if total_sent > 0 else 0):.1f}%</b>
+"""
+    except Exception as e:
+        return f"❌ Ошибка при загрузке статистики рассылок: {e}"    """Форматирование статистики рассылок"""
     all_mailings = db.get_all_mailings()
     active_mailings = db.get_mailings_by_status('active')
     draft_mailings = db.get_mailings_by_status('draft')

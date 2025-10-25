@@ -5,6 +5,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from services.database import db, MailingStats
 from datetime import datetime, timedelta
 import asyncio
+import config
 
 class MailingService:
     def __init__(self, bot: Bot):
@@ -21,7 +22,6 @@ class MailingService:
                     text=button['text'], 
                     url=button['url']
                 ))
-            # Можно добавить callback кнопки при необходимости
         return keyboard.as_markup()
 
     async def send_mailing(self, mailing_id: int, user_id: int, target_group: str):
@@ -98,7 +98,7 @@ class MailingService:
             
         except TelegramForbiddenError as e:
             # Пользователь заблокировал бота
-            print(f"User {user_id} blocked the bot: {e}")
+            print(f"User {user_id} blocked the bot")
             db.update_mailing_stats(stats.id, sent=True, delivered=False)
             return False, None
         except TelegramBadRequest as e:
@@ -121,7 +121,7 @@ class MailingService:
         if target_group == "all":
             users = db.get_all_users()
             target_name = "все пользователи"
-        elif target_group == "active_today":
+        elif target_group == "active":
             users = db.get_active_users_today()
             target_name = "активные сегодня"
         elif target_group == "new":
@@ -136,7 +136,6 @@ class MailingService:
 
         success_count = 0
         total_count = len(users)
-        errors = []
         
         # Статус начала рассылки
         progress_message = await self.bot.send_message(
@@ -192,25 +191,3 @@ class MailingService:
             pass
         
         return True, success_count, total_count
-
-    async def send_test_mailing(self, mailing_id: int, admin_id: int):
-        """Отправка тестовой рассылки админу"""
-        mailing = db.get_mailing(mailing_id)
-        if not mailing:
-            return False
-        
-        success, message_id = await self.send_mailing(
-            mailing_id=mailing_id,
-            user_id=admin_id,
-            target_group="test"
-        )
-        
-        if success:
-            await self.bot.send_message(
-                chat_id=admin_id,
-                text="✅ <b>Тестовая рассылка отправлена</b>\n\n"
-                     "Это тестовое сообщение для проверки внешнего вида рассылки.",
-                parse_mode="HTML"
-            )
-        
-        return success

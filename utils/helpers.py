@@ -1,17 +1,7 @@
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from services.database import db
 from datetime import datetime
-
-def get_mailing_preview_keyboard(mailing_id: int):
-    """Клавиатура для превью рассылки"""
-    keyboard = InlineKeyboardBuilder()
-    keyboard.add(InlineKeyboardButton(text="🚀 Отправить сейчас", callback_data=f"send_now_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="💾 Сохранить черновик", callback_data=f"save_draft_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="✅ Активировать", callback_data=f"activate_mailing_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="🔙 К рассылкам", callback_data="admin_mailings"))
-    keyboard.adjust(1)
-    return keyboard.as_markup()
 
 def get_admin_main_keyboard():
     """Главное меню админ-панели"""
@@ -102,6 +92,16 @@ def get_back_keyboard(target: str = "admin_main"):
     """Универсальная кнопка назад"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data=target))
+    return keyboard.as_markup()
+
+def get_mailing_preview_keyboard(mailing_id: int):
+    """Клавиатура для превью рассылки"""
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(InlineKeyboardButton(text="🚀 Отправить сейчас", callback_data=f"send_now_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="💾 Сохранить черновик", callback_data=f"save_draft_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="✅ Активировать", callback_data=f"activate_mailing_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="🔙 К рассылкам", callback_data="admin_mailings"))
+    keyboard.adjust(1)
     return keyboard.as_markup()
 
 def format_stats_overview():

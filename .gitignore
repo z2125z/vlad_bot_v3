@@ -8,6 +8,8 @@ config.py
 # Database
 *.db
 *.sqlite3
+xlsx
+.xlsx
 
 # Python
 __pycache__/

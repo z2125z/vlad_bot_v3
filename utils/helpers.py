@@ -129,26 +129,6 @@ def format_stats_overview():
 """
     except Exception as e:
         return f"❌ Ошибка при загрузке статистики: {e}"
-    """Форматирование общей статистики"""
-    users_count = db.get_user_count()
-    active_today = db.get_active_users_count_today()
-    all_mailings = len(db.get_all_mailings())
-    active_mailings = len(db.get_mailings_by_status('active'))
-    
-    return f"""
-📊 <b>Общая статистика</b>
-
-👥 <b>Пользователи:</b>
-   • Всего: <b>{users_count}</b>
-   • Активных сегодня: <b>{active_today}</b>
-   • Активность: <b>{(active_today/users_count*100 if users_count > 0 else 0):.1f}%</b>
-
-📨 <b>Рассылки:</b>
-   • Всего: <b>{all_mailings}</b>
-   • Активных: <b>{active_mailings}</b>
-
-⏱️ <b>Обновлено:</b> {datetime.now().strftime('%H:%M %d.%m.%Y')}
-"""
 
 def format_users_stats():
     """Форматирование статистики пользователей"""
@@ -181,7 +161,7 @@ def format_mailings_stats():
         total_delivered = 0
         
         for mailing in all_mailings:
-            stats = db.get_mailing_stats(mailing.id)
+            stats = db.get_mailing_stats(mailing['id'])
             total_sent += stats['total_sent']
             total_delivered += stats['delivered']
         
@@ -200,34 +180,7 @@ def format_mailings_stats():
    • Общий успех: <b>{(total_delivered/total_sent*100 if total_sent > 0 else 0):.1f}%</b>
 """
     except Exception as e:
-        return f"❌ Ошибка при загрузке статистики рассылок: {e}"    """Форматирование статистики рассылок"""
-    all_mailings = db.get_all_mailings()
-    active_mailings = db.get_mailings_by_status('active')
-    draft_mailings = db.get_mailings_by_status('draft')
-    archived_mailings = db.get_mailings_by_status('archived')
-    
-    total_sent = 0
-    total_delivered = 0
-    
-    for mailing in all_mailings:
-        stats = db.get_mailing_stats(mailing.id)
-        total_sent += stats['total_sent']
-        total_delivered += stats['delivered']
-    
-    return f"""
-📨 <b>Статистика рассылок</b>
-
-📈 <b>Общее:</b>
-   • Всего рассылок: <b>{len(all_mailings)}</b>
-   • Активных: <b>{len(active_mailings)}</b>
-   • Черновиков: <b>{len(draft_mailings)}</b>
-   • В архиве: <b>{len(archived_mailings)}</b>
-
-📊 <b>Эффективность:</b>
-   • Всего отправлено: <b>{total_sent}</b>
-   • Доставлено: <b>{total_delivered}</b>
-   • Общий успех: <b>{(total_delivered/total_sent*100 if total_sent > 0 else 0):.1f}%</b>
-"""
+        return f"❌ Ошибка при загрузке статистики рассылок: {e}"
 
 def format_mailing_preview(mailing):
     """Форматирование превью рассылки"""
@@ -246,15 +199,28 @@ def format_mailing_preview(mailing):
         'archived': '📁 В архиве'
     }
     
-    stats = db.get_mailing_stats(mailing.id)
+    stats = db.get_mailing_stats(mailing['id'])
+    
+    message_text = mailing['message_text']
+    preview_text = message_text[:200] + '...' if len(message_text) > 200 else message_text
+    
+    created_at = mailing['created_at'].strftime('%d.%m.%Y %H:%M') if mailing['created_at'] else 'неизвестно'
     
     return f"""
-{type_emojis.get(mailing.message_type, '📝')} <b>Просмотр рассылки</b>
+{type_emojis.get(mailing['message_type'], '📝')} <b>Просмотр рассылки</b>
 
-📋 <b>Название:</b> {mailing.title}
-📄 <b>Текст:</b> {mailing.message_text[:200] + '...' if len(mailing.message_text) > 200 else mailing.message_text}
-🎬 <b>Тип:</b> {mailing.message_type}
-📊 <b>Статус:</b> {status_texts.get(mailing.status, mailing.status)}
+📋 <b>Название:</b> {mailing['title']}
+📄 <b>Текст:</b> {preview_text}
+🎬 <b>Тип:</b> {mailing['message_type']}
+📊 <b>Статус:</b> {status_texts.get(mailing['status'], mailing['status'])}
 📈 <b>Статистика:</b> Отправлено: {stats['total_sent']}, Успешно: {stats['delivered']}
-⏰ <b>Создана:</b> {mailing.created_at.strftime('%d.%m.%Y %H:%M')}
+⏰ <b>Создана:</b> {created_at}
 """
+
+def get_skip_edit_keyboard(mailing_id: int):
+    """Клавиатура для пропуска редактирования медиа"""
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(InlineKeyboardButton(text="⏭️ Пропустить", callback_data=f"skip_edit_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data=f"view_mailing_{mailing_id}"))
+    keyboard.adjust(1)
+    return keyboard.as_markup()

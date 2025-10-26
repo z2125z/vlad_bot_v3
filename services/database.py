@@ -1,9 +1,9 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, func
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from datetime import datetime, timedelta
 import config
-import os
+import json
 
 Base = declarative_base()
 
@@ -22,12 +22,12 @@ class Mailing(Base):
     __tablename__ = 'mailings'
     
     id = Column(Integer, primary_key=True)
-    title = Column(String(200))
+    title = Column(String(255), nullable=False)
     message_text = Column(Text)
-    message_type = Column(String(20), default='text')  # text, photo, video, document, voice, video_note
-    media_file_id = Column(String(500), nullable=True)  # Добавляем nullable=True
-    status = Column(String(20), default='draft')  # draft, active, archived, deleted
-    buttons = Column(JSON, nullable=True)  # Разрешаем NULL
+    message_type = Column(String(50), nullable=False)
+    media_file_id = Column(String(255), nullable=True)
+    status = Column(String(50), default='draft')
+    buttons = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -37,7 +37,7 @@ class MailingStats(Base):
     id = Column(Integer, primary_key=True)
     mailing_id = Column(Integer, ForeignKey('mailings.id'))
     user_id = Column(Integer, ForeignKey('users.user_id'))
-    target_group = Column(String(50))  # all, active_today, new
+    target_group = Column(String(50))
     sent = Column(Boolean, default=False)
     delivered = Column(Boolean, default=False)
     read = Column(Boolean, default=False)
@@ -52,23 +52,44 @@ class MailingStats(Base):
 class Database:
     def __init__(self):
         self.engine = create_engine(config.DATABASE_URL)
-        self._create_tables()
-        Session = sessionmaker(bind=self.engine)
+        self._create_tables()  # Создаем таблицы если их нет
+        Session = scoped_session(sessionmaker(bind=self.engine))
         self.session = Session()
 
     def _create_tables(self):
-        """Создание таблиц с обработкой ошибок"""
+        """Создание таблиц если они не существуют"""
         try:
             Base.metadata.create_all(self.engine)
+            print("Таблицы созданы/проверены")
         except Exception as e:
             print(f"Ошибка при создании таблиц: {e}")
-            # Попробуем создать таблицы по одной
+
+    def _get_mailing_dict(self, mailing):
+        """Преобразует объект Mailing в словарь с декодированными кнопками"""
+        if not mailing:
+            return None
+            
+        mailing_dict = {
+            'id': mailing.id,
+            'title': mailing.title,
+            'message_text': mailing.message_text,
+            'message_type': mailing.message_type,
+            'media_file_id': mailing.media_file_id,
+            'status': mailing.status,
+            'created_at': mailing.created_at,
+            'updated_at': mailing.updated_at
+        }
+        
+        # Декодируем кнопки
+        if mailing.buttons:
             try:
-                User.__table__.create(self.engine, checkfirst=True)
-                Mailing.__table__.create(self.engine, checkfirst=True)
-                MailingStats.__table__.create(self.engine, checkfirst=True)
-            except Exception as e2:
-                print(f"Ошибка при поочередном создании таблиц: {e2}")
+                mailing_dict['buttons'] = json.loads(mailing.buttons)
+            except:
+                mailing_dict['buttons'] = []
+        else:
+            mailing_dict['buttons'] = []
+            
+        return mailing_dict
 
     def add_user(self, user_id: int, username: str, full_name: str):
         try:
@@ -163,17 +184,20 @@ class Database:
     def create_mailing(self, title: str, message_text: str, message_type: str = "text", 
                       media_file_id: str = None, buttons: list = None, status: str = "draft"):
         try:
+            # Преобразуем кнопки в JSON строку
+            buttons_json = json.dumps(buttons or [])
+            
             mailing = Mailing(
                 title=title,
                 message_text=message_text,
                 message_type=message_type,
                 media_file_id=media_file_id,
-                buttons=buttons or [],
+                buttons=buttons_json,
                 status=status
             )
             self.session.add(mailing)
             self.session.commit()
-            return mailing
+            return self._get_mailing_dict(mailing)
         except Exception as e:
             print(f"Ошибка при создании рассылки: {e}")
             self.session.rollback()
@@ -184,10 +208,13 @@ class Database:
             mailing = self.session.query(Mailing).filter_by(id=mailing_id).first()
             if mailing:
                 for key, value in kwargs.items():
+                    if key == 'buttons' and isinstance(value, list):
+                        value = json.dumps(value)
                     setattr(mailing, key, value)
                 mailing.updated_at = datetime.utcnow()
                 self.session.commit()
-            return mailing
+                return self._get_mailing_dict(mailing)
+            return None
         except Exception as e:
             print(f"Ошибка при обновлении рассылки: {e}")
             self.session.rollback()
@@ -195,21 +222,24 @@ class Database:
 
     def get_mailing(self, mailing_id: int):
         try:
-            return self.session.query(Mailing).filter_by(id=mailing_id).first()
+            mailing = self.session.query(Mailing).filter_by(id=mailing_id).first()
+            return self._get_mailing_dict(mailing)
         except Exception as e:
             print(f"Ошибка при получении рассылки: {e}")
             return None
 
     def get_mailings_by_status(self, status: str):
         try:
-            return self.session.query(Mailing).filter_by(status=status).all()
+            mailings = self.session.query(Mailing).filter_by(status=status).all()
+            return [self._get_mailing_dict(mailing) for mailing in mailings]
         except Exception as e:
             print(f"Ошибка при получении рассылок по статусу: {e}")
             return []
 
     def get_all_mailings(self):
         try:
-            return self.session.query(Mailing).filter(Mailing.status != 'deleted').all()
+            mailings = self.session.query(Mailing).filter(Mailing.status != 'deleted').all()
+            return [self._get_mailing_dict(mailing) for mailing in mailings]
         except Exception as e:
             print(f"Ошибка при получении всех рассылок: {e}")
             return []
@@ -267,4 +297,5 @@ class Database:
             self.session.rollback()
             return None
 
+# Создаем экземпляр базы данных
 db = Database()

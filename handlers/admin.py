@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from services.database import db
 from services.mailing import MailingService
-from services.excel_export import ExcelExporter  # Добавляем импорт
+from services.excel_export import ExcelExporter
 from utils.helpers import (
     get_admin_main_keyboard,
     get_stats_keyboard,
@@ -146,16 +146,28 @@ async def mailings_active(callback: CallbackQuery):
             return
         
         text = "✅ <b>Активные рассылки:</b>\n\n"
+        keyboard = InlineKeyboardBuilder()
+        
         for mailing in mailings:
-            stats = db.get_mailing_stats(mailing.id)
-            text += f"📨 {mailing.title}\n"
+            stats = db.get_mailing_stats(mailing['id'])
+            created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
+            text += f"📨 {mailing['title']}\n"
             text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
-            text += f"   🕐 Создана: {mailing.created_at.strftime('%d.%m.%Y')}\n"
-            text += f"   [ID: {mailing.id}]\n\n"
+            text += f"   🕐 Создана: {created_at}\n"
+            text += f"   [ID: {mailing['id']}]\n\n"
+            
+            # Добавляем кнопку для управления каждой рассылкой
+            keyboard.add(InlineKeyboardButton(
+                text=f"📝 {mailing['title'][:20]}...",
+                callback_data=f"view_mailing_{mailing['id']}"
+            ))
+        
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_mailings"))
+        keyboard.adjust(1)
         
         await callback.message.edit_text(
             text,
-            reply_markup=get_back_keyboard("admin_mailings"),
+            reply_markup=keyboard.as_markup(),
             parse_mode="HTML"
         )
     except Exception as e:
@@ -182,14 +194,26 @@ async def mailings_drafts(callback: CallbackQuery):
             return
         
         text = "📝 <b>Черновики рассылок:</b>\n\n"
+        keyboard = InlineKeyboardBuilder()
+        
         for mailing in mailings:
-            text += f"📄 {mailing.title}\n"
-            text += f"   🕐 Создан: {mailing.created_at.strftime('%d.%m.%Y')}\n"
-            text += f"   [ID: {mailing.id}]\n\n"
+            created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
+            text += f"📄 {mailing['title']}\n"
+            text += f"   🕐 Создан: {created_at}\n"
+            text += f"   [ID: {mailing['id']}]\n\n"
+            
+            # Добавляем кнопку для управления каждой рассылкой
+            keyboard.add(InlineKeyboardButton(
+                text=f"📝 {mailing['title'][:20]}...",
+                callback_data=f"view_mailing_{mailing['id']}"
+            ))
+        
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_mailings"))
+        keyboard.adjust(1)
         
         await callback.message.edit_text(
             text,
-            reply_markup=get_back_keyboard("admin_mailings"),
+            reply_markup=keyboard.as_markup(),
             parse_mode="HTML"
         )
     except Exception as e:
@@ -216,16 +240,28 @@ async def mailings_archive(callback: CallbackQuery):
             return
         
         text = "📁 <b>Архив рассылок:</b>\n\n"
+        keyboard = InlineKeyboardBuilder()
+        
         for mailing in mailings:
-            stats = db.get_mailing_stats(mailing.id)
-            text += f"📨 {mailing.title}\n"
+            stats = db.get_mailing_stats(mailing['id'])
+            created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
+            text += f"📨 {mailing['title']}\n"
             text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
-            text += f"   🕐 Создана: {mailing.created_at.strftime('%d.%m.%Y')}\n"
-            text += f"   [ID: {mailing.id}]\n\n"
+            text += f"   🕐 Создана: {created_at}\n"
+            text += f"   [ID: {mailing['id']}]\n\n"
+            
+            # Добавляем кнопку для управления каждой рассылкой
+            keyboard.add(InlineKeyboardButton(
+                text=f"📝 {mailing['title'][:20]}...",
+                callback_data=f"view_mailing_{mailing['id']}"
+            ))
+        
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_mailings"))
+        keyboard.adjust(1)
         
         await callback.message.edit_text(
             text,
-            reply_markup=get_back_keyboard("admin_mailings"),
+            reply_markup=keyboard.as_markup(),
             parse_mode="HTML"
         )
     except Exception as e:
@@ -233,7 +269,7 @@ async def mailings_archive(callback: CallbackQuery):
             f"❌ Ошибка при загрузке архива: {e}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
-
+        
 # Меню отправки рассылки
 @router.callback_query(F.data == "mailings_send")
 async def mailings_send(callback: CallbackQuery):
@@ -256,8 +292,8 @@ async def mailings_send(callback: CallbackQuery):
         
         for mailing in active_mailings:
             keyboard.add(InlineKeyboardButton(
-                text=f"📨 {mailing.title}",
-                callback_data=f"select_mailing_{mailing.id}"
+                text=f"📨 {mailing['title']}",
+                callback_data=f"select_mailing_{mailing['id']}"
             ))
         
         keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_mailings"))
@@ -295,7 +331,7 @@ async def select_mailing_target(callback: CallbackQuery):
         
         await callback.message.edit_text(
             f"🎯 <b>Выбор целевой группы</b>\n\n"
-            f"📨 Рассылка: <b>{mailing.title}</b>\n\n"
+            f"📨 Рассылка: <b>{mailing['title']}</b>\n\n"
             f"👥 Доступные группы:\n"
             f"   • Все пользователи: {users_count} чел.\n"
             f"   • Активные сегодня: {active_today} чел.\n"
@@ -342,7 +378,7 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
         if success:
             await callback.message.edit_text(
                 f"✅ <b>Рассылка завершена!</b>\n\n"
-                f"📋 <b>Рассылка:</b> {mailing.title}\n"
+                f"📋 <b>Рассылка:</b> {mailing['title']}\n"
                 f"🎯 <b>Целевая группа:</b> {get_target_group_name(target_group)}\n"
                 f"📤 <b>Отправлено:</b> {success_count}/{total_count} сообщений\n"
                 f"📊 <b>Успешных:</b> {(success_count/total_count*100 if total_count > 0 else 0):.1f}%",

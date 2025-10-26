@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery, ContentType
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from services.database import db
-from utils.helpers import get_mailing_type_keyboard, get_back_keyboard, format_mailing_preview, get_mailing_preview_keyboard
+from utils.helpers import get_mailing_type_keyboard, get_back_keyboard, format_mailing_preview, get_mailing_preview_keyboard, get_mailing_actions_keyboard
 import config
 
 router = Router()
@@ -13,8 +13,11 @@ class MailingConstructor(StatesGroup):
     waiting_for_text = State()
     waiting_for_media = State()
     waiting_for_confirmation = State()
+    editing_title = State()
+    editing_text = State()
+    editing_media = State()
 
-# Начало создания рассылки - ИСПРАВЛЕННАЯ ВЕРСИЯ
+# Начало создания рассылки
 @router.callback_query(F.data == "create_mailing")
 async def create_mailing_start(callback: CallbackQuery, state: FSMContext):
     if not callback.from_user.id in config.ADMIN_IDS:
@@ -22,13 +25,13 @@ async def create_mailing_start(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.set_state(MailingConstructor.waiting_for_title)
-    await callback.message.answer(  # Используем answer для нового сообщения
+    await callback.message.answer(
         "📝 <b>Создание новой рассылки</b>\n\n"
         "Введите название рассылки:",
         reply_markup=get_back_keyboard("admin_mailings"),
         parse_mode="HTML"
     )
-    await callback.answer()  # Важно: закрываем callback
+    await callback.answer()
 
 # Получение названия
 @router.message(MailingConstructor.waiting_for_title)
@@ -101,7 +104,6 @@ async def mailing_get_media(message: Message, state: FSMContext):
     media_file_id = None
     valid_content = False
     
-    # Проверяем соответствие выбранного типа и отправленного контента
     if media_type == "photo" and message.photo:
         media_file_id = message.photo[-1].file_id
         valid_content = True
@@ -145,72 +147,26 @@ async def mailing_finalize(update, state: FSMContext):
         await state.clear()
         return
     
-    await state.update_data(mailing_id=mailing.id)
+    await state.update_data(mailing_id=mailing['id'])
     await state.set_state(MailingConstructor.waiting_for_confirmation)
     
     preview_text = format_mailing_preview(mailing)
     
-    # Отправляем превью
+    # Отправляем превью как текстовое сообщение, чтобы избежать ошибок редактирования
     if update.__class__.__name__ == "CallbackQuery":
         message = update.message
-        await message.answer(  # Всегда используем answer для нового сообщения
+        await message.answer(
             preview_text,
             parse_mode="HTML",
-            reply_markup=get_mailing_preview_keyboard(mailing.id)
+            reply_markup=get_mailing_preview_keyboard(mailing['id'])
         )
     else:
         message = update
-        # Для разных типов контента отправляем по-разному
-        try:
-            if mailing.message_type == "text":
-                await message.answer(
-                    preview_text,
-                    parse_mode="HTML",
-                    reply_markup=get_mailing_preview_keyboard(mailing.id)
-                )
-            elif mailing.message_type == "photo":
-                await message.answer_photo(
-                    mailing.media_file_id,
-                    caption=preview_text,
-                    parse_mode="HTML",
-                    reply_markup=get_mailing_preview_keyboard(mailing.id)
-                )
-            elif mailing.message_type == "video":
-                await message.answer_video(
-                    mailing.media_file_id,
-                    caption=preview_text,
-                    parse_mode="HTML",
-                    reply_markup=get_mailing_preview_keyboard(mailing.id)
-                )
-            elif mailing.message_type == "document":
-                await message.answer_document(
-                    mailing.media_file_id,
-                    caption=preview_text,
-                    parse_mode="HTML",
-                    reply_markup=get_mailing_preview_keyboard(mailing.id)
-                )
-            elif mailing.message_type == "voice":
-                await message.answer_voice(
-                    mailing.media_file_id,
-                    caption=preview_text,
-                    parse_mode="HTML",
-                    reply_markup=get_mailing_preview_keyboard(mailing.id)
-                )
-            elif mailing.message_type == "video_note":
-                await message.answer_video_note(
-                    mailing.media_file_id
-                )
-                await message.answer(
-                    preview_text,
-                    parse_mode="HTML",
-                    reply_markup=get_mailing_preview_keyboard(mailing.id)
-                )
-        except Exception as e:
-            await message.answer(
-                f"❌ Ошибка отображения превью: {e}\n\n"
-                f"📝 Текст рассылки: {mailing.message_text[:500]}...",
-                reply_markup=get_mailing_preview_keyboard(mailing.id)
-            )
+        await message.answer(
+            preview_text,
+            parse_mode="HTML",
+            reply_markup=get_mailing_preview_keyboard(mailing['id'])
+        )
 
 # Сохранение как черновика
 @router.callback_query(F.data.startswith("save_draft_"))
@@ -220,7 +176,8 @@ async def save_mailing_draft(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     
     await callback.answer("✅ Рассылка сохранена как черновик")
-    await callback.message.edit_text(
+    # Используем answer вместо edit_text для избежания ошибок
+    await callback.message.answer(
         "✅ Рассылка сохранена как черновик\n\n"
         "Вы можете найти её в разделе 'Черновики'",
         reply_markup=get_back_keyboard("admin_mailings")
@@ -234,7 +191,8 @@ async def activate_mailing(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     
     await callback.answer("✅ Рассылка активирована")
-    await callback.message.edit_text(
+    # Используем answer вместо edit_text для избежания ошибок
+    await callback.message.answer(
         "✅ Рассылка активирована и готова к отправке\n\n"
         "Теперь вы можете отправить её через раздел 'Отправить рассылку'",
         reply_markup=get_back_keyboard("admin_mailings")
@@ -249,16 +207,16 @@ async def send_mailing_now(callback: CallbackQuery, state: FSMContext, bot: Bot)
     from services.mailing import MailingService
     mailing_service = MailingService(bot)
     
-    await callback.message.edit_text("🔄 Подготовка к отправке...")
+    # Используем answer вместо edit_text для избежания ошибок
+    await callback.message.answer("🔄 Подготовка к отправке...")
     
-    # Отправляем всем пользователям
     success, success_count, total_count = await mailing_service.broadcast_mailing(
         mailing_id=mailing_id,
         target_group="all"
     )
     
     if success:
-        await callback.message.edit_text(
+        await callback.message.answer(
             f"✅ <b>Рассылка отправлена!</b>\n\n"
             f"📤 Отправлено: {success_count}/{total_count} сообщений\n"
             f"📊 Успешных: {(success_count/total_count*100 if total_count > 0 else 0):.1f}%\n\n"
@@ -267,19 +225,228 @@ async def send_mailing_now(callback: CallbackQuery, state: FSMContext, bot: Bot)
             reply_markup=get_back_keyboard("admin_mailings")
         )
     else:
-        await callback.message.edit_text(
+        await callback.message.answer(
             "❌ Ошибка при отправке рассылки",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+
+# Просмотр конкретной рассылки
+@router.callback_query(F.data.startswith("view_mailing_"))
+async def view_mailing(callback: CallbackQuery):
+    mailing_id = int(callback.data.replace("view_mailing_", ""))
+    mailing = db.get_mailing(mailing_id)
+    
+    if not mailing:
+        await callback.answer("❌ Рассылка не найдена")
+        return
+    
+    preview_text = format_mailing_preview(mailing)
+    await callback.message.answer(
+        preview_text,
+        parse_mode="HTML",
+        reply_markup=get_mailing_actions_keyboard(mailing_id, mailing['status'])
+    )
+    await callback.answer()
+
+# Редактирование названия рассылки
+@router.callback_query(F.data.startswith("edit_mailing_"))
+async def edit_mailing_start(callback: CallbackQuery, state: FSMContext):
+    mailing_id = int(callback.data.replace("edit_mailing_", ""))
+    mailing = db.get_mailing(mailing_id)
+    
+    if not mailing:
+        await callback.answer("❌ Рассылка не найдена")
+        return
+    
+    await state.update_data(editing_mailing_id=mailing_id)
+    await state.set_state(MailingConstructor.editing_title)
+    
+    await callback.message.answer(
+        f"✏️ <b>Редактирование рассылки</b>\n\n"
+        f"Текущее название: <b>{mailing['title']}</b>\n\n"
+        f"Введите новое название рассылки:",
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard(f"view_mailing_{mailing_id}")
+    )
+    await callback.answer()
+
+# Получение нового названия
+@router.message(MailingConstructor.editing_title)
+async def edit_mailing_title(message: Message, state: FSMContext):
+    if len(message.text) > 200:
+        await message.answer("❌ Слишком длинное название. Максимум 200 символов.")
+        return
+    
+    data = await state.get_data()
+    mailing_id = data.get('editing_mailing_id')
+    
+    db.update_mailing(mailing_id, title=message.text)
+    await state.set_state(MailingConstructor.editing_text)
+    
+    mailing = db.get_mailing(mailing_id)
+    
+    await message.answer(
+        f"✅ Название обновлено!\n\n"
+        f"Текущий текст: <b>{mailing['message_text'][:100]}...</b>\n\n"
+        f"Введите новый текст рассылки:",
+        parse_mode="HTML",
+        reply_markup=get_back_keyboard(f"view_mailing_{mailing_id}")
+    )
+
+# Получение нового текста
+@router.message(MailingConstructor.editing_text)
+async def edit_mailing_text(message: Message, state: FSMContext):
+    if not message.html_text and not message.text:
+        await message.answer("❌ Текст не может быть пустым.")
+        return
+    
+    data = await state.get_data()
+    mailing_id = data.get('editing_mailing_id')
+    
+    text_content = message.html_text or message.text
+    db.update_mailing(mailing_id, message_text=text_content)
+    
+    await state.set_state(MailingConstructor.editing_media)
+    
+    mailing = db.get_mailing(mailing_id)
+    
+    await message.answer(
+        f"✅ Текст обновлен!\n\n"
+        f"Текущий тип контента: <b>{mailing['message_type']}</b>\n\n"
+        f"Выберите новый тип контента или нажмите 'Пропустить' чтобы оставить текущий:",
+        parse_mode="HTML",
+        reply_markup=get_mailing_type_keyboard()
+    )
+
+# Обработка выбора нового типа медиа при редактировании
+@router.callback_query(MailingConstructor.editing_media, F.data.startswith("mailing_type_"))
+async def edit_mailing_media_type(callback: CallbackQuery, state: FSMContext):
+    media_type = callback.data.replace("mailing_type_", "")
+    
+    data = await state.get_data()
+    mailing_id = data.get('editing_mailing_id')
+    
+    if media_type == "text":
+        db.update_mailing(mailing_id, message_type="text", media_file_id=None)
+        await edit_mailing_finalize(callback, state)
+    else:
+        await state.update_data(editing_media_type=media_type)
+        media_names = {
+            "photo": "🖼️ фото",
+            "video": "🎥 видео", 
+            "document": "📎 документ",
+            "voice": "🎤 голосовое сообщение",
+            "video_note": "📹 видео-сообщение"
+        }
+        
+        await callback.message.answer(
+            f"📎 Отправьте {media_names.get(media_type, 'медиа')} для рассылки:",
+            reply_markup=get_back_keyboard(f"view_mailing_{mailing_id}")
+        )
+    await callback.answer()
+
+# Получение нового медиа при редактировании
+@router.message(
+    MailingConstructor.editing_media,
+    F.content_type.in_({
+        ContentType.PHOTO, ContentType.VIDEO, ContentType.DOCUMENT,
+        ContentType.VOICE, ContentType.VIDEO_NOTE
+    })
+)
+async def edit_mailing_media(message: Message, state: FSMContext):
+    data = await state.get_data()
+    media_type = data.get('editing_media_type')
+    mailing_id = data.get('editing_mailing_id')
+    
+    media_file_id = None
+    valid_content = False
+    
+    if media_type == "photo" and message.photo:
+        media_file_id = message.photo[-1].file_id
+        valid_content = True
+    elif media_type == "video" and message.video:
+        media_file_id = message.video.file_id
+        valid_content = True
+    elif media_type == "document" and message.document:
+        media_file_id = message.document.file_id
+        valid_content = True
+    elif media_type == "voice" and message.voice:
+        media_file_id = message.voice.file_id
+        valid_content = True
+    elif media_type == "video_note" and message.video_note:
+        media_file_id = message.video_note.file_id
+        valid_content = True
+    
+    if valid_content and media_file_id:
+        db.update_mailing(mailing_id, message_type=media_type, media_file_id=media_file_id)
+        await edit_mailing_finalize(message, state)
+    else:
+        await message.answer(f"❌ Вы отправили неверный тип медиа. Ожидается: {media_type}")
+
+# Финальный шаг при редактировании
+async def edit_mailing_finalize(update, state: FSMContext):
+    data = await state.get_data()
+    mailing_id = data.get('editing_mailing_id')
+    
+    mailing = db.get_mailing(mailing_id)
+    preview_text = format_mailing_preview(mailing)
+    
+    if update.__class__.__name__ == "CallbackQuery":
+        message = update.message
+        await message.answer(
+            "✅ Рассылка успешно обновлена!\n\n" + preview_text,
+            parse_mode="HTML",
+            reply_markup=get_mailing_actions_keyboard(mailing_id, mailing['status'])
+        )
+    else:
+        message = update
+        await message.answer(
+            "✅ Рассылка успешно обновлена!\n\n" + preview_text,
+            parse_mode="HTML",
+            reply_markup=get_mailing_actions_keyboard(mailing_id, mailing['status'])
+        )
+    
+    await state.clear()
+
+# Архивирование рассылки
+@router.callback_query(F.data.startswith("archive_mailing_"))
+async def archive_mailing(callback: CallbackQuery):
+    mailing_id = int(callback.data.replace("archive_mailing_", ""))
+    db.change_mailing_status(mailing_id, "archived")
+    
+    await callback.answer("✅ Рассылка перемещена в архив")
+    await callback.message.answer(
+        "✅ Рассылка перемещена в архив",
+        reply_markup=get_back_keyboard("admin_mailings")
+    )
+
+# Удаление рассылки
+@router.callback_query(F.data.startswith("delete_mailing_"))
+async def delete_mailing(callback: CallbackQuery):
+    mailing_id = int(callback.data.replace("delete_mailing_", ""))
+    db.change_mailing_status(mailing_id, "deleted")
+    
+    await callback.answer("✅ Рассылка удалена")
+    await callback.message.answer(
+        "✅ Рассылка удалена",
+        reply_markup=get_back_keyboard("admin_mailings")
+    )
 
 # Выход из конструктора
 @router.callback_query(F.data == "admin_mailings")
 async def exit_constructor(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     from utils.helpers import get_mailings_keyboard
-    await callback.message.edit_text(
+    await callback.message.answer(
         "📨 <b>Управление рассылками</b>\n\n"
         "Выберите действие:",
         reply_markup=get_mailings_keyboard(),
         parse_mode="HTML"
     )
+
+    # Пропуск редактирования медиа
+@router.callback_query(F.data.startswith("skip_edit_"))
+async def skip_edit_media(callback: CallbackQuery, state: FSMContext):
+    mailing_id = int(callback.data.replace("skip_edit_", ""))
+    await edit_mailing_finalize(callback, state)
+    await callback.answer("✅ Изменения сохранены")

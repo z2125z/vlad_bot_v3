@@ -2,7 +2,7 @@ from aiogram import Bot
 from aiogram.types import Message, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from services.database import db, MailingStats
+from services.database import db
 from datetime import datetime, timedelta
 import asyncio
 import config
@@ -31,58 +31,58 @@ class MailingService:
 
         # Создаем запись статистики
         stats = db.add_mailing_stats(mailing_id, user_id, target_group)
-        keyboard = self._create_keyboard(mailing.buttons)
+        keyboard = self._create_keyboard(mailing['buttons'])
 
         try:
-            if mailing.message_type == "text":
+            if mailing['message_type'] == "text":
                 message = await self.bot.send_message(
                     chat_id=user_id,
-                    text=mailing.message_text,
+                    text=mailing['message_text'],
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
-            elif mailing.message_type == "photo":
+            elif mailing['message_type'] == "photo":
                 message = await self.bot.send_photo(
                     chat_id=user_id,
-                    photo=mailing.media_file_id,
-                    caption=mailing.message_text,
+                    photo=mailing['media_file_id'],
+                    caption=mailing['message_text'],
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
-            elif mailing.message_type == "video":
+            elif mailing['message_type'] == "video":
                 message = await self.bot.send_video(
                     chat_id=user_id,
-                    video=mailing.media_file_id,
-                    caption=mailing.message_text,
+                    video=mailing['media_file_id'],
+                    caption=mailing['message_text'],
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
-            elif mailing.message_type == "document":
+            elif mailing['message_type'] == "document":
                 message = await self.bot.send_document(
                     chat_id=user_id,
-                    document=mailing.media_file_id,
-                    caption=mailing.message_text,
+                    document=mailing['media_file_id'],
+                    caption=mailing['message_text'],
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
-            elif mailing.message_type == "voice":
+            elif mailing['message_type'] == "voice":
                 message = await self.bot.send_voice(
                     chat_id=user_id,
-                    voice=mailing.media_file_id,
-                    caption=mailing.message_text,
+                    voice=mailing['media_file_id'],
+                    caption=mailing['message_text'],
                     parse_mode="HTML",
                     reply_markup=keyboard
                 )
-            elif mailing.message_type == "video_note":
+            elif mailing['message_type'] == "video_note":
                 message = await self.bot.send_video_note(
                     chat_id=user_id,
-                    video_note=mailing.media_file_id
+                    video_note=mailing['media_file_id']
                 )
                 # Для видео-сообщений отправляем текст отдельно
-                if mailing.message_text:
+                if mailing['message_text']:
                     await self.bot.send_message(
                         chat_id=user_id,
-                        text=mailing.message_text,
+                        text=mailing['message_text'],
                         parse_mode="HTML",
                         reply_markup=keyboard
                     )
@@ -114,7 +114,7 @@ class MailingService:
 
     async def broadcast_mailing(self, mailing_id: int, target_group: str = "all"):
         mailing = db.get_mailing(mailing_id)
-        if not mailing or mailing.status != "active":
+        if not mailing or mailing['status'] != "active":
             return False, 0, 0
 
         # Выбираем пользователей в зависимости от целевой группы
@@ -141,7 +141,7 @@ class MailingService:
         progress_message = await self.bot.send_message(
             chat_id=config.ADMIN_IDS[0],  # Первому админу
             text=f"🔄 Начинаю рассылку...\n"
-                 f"📨 Рассылка: {mailing.title}\n"
+                 f"📨 Рассылка: {mailing['title']}\n"
                  f"🎯 Целевая группа: {target_name}\n"
                  f"👥 Получателей: {total_count}\n"
                  f"📊 Прогресс: 0/{total_count} (0%)"
@@ -163,7 +163,7 @@ class MailingService:
                 try:
                     await progress_message.edit_text(
                         f"🔄 Рассылка в процессе...\n"
-                        f"📨 Рассылка: {mailing.title}\n"
+                        f"📨 Рассылка: {mailing['title']}\n"
                         f"🎯 Целевая группа: {target_name}\n"
                         f"👥 Получателей: {total_count}\n"
                         f"📊 Прогресс: {index + 1}/{total_count} ({progress:.1f}%)\n"
@@ -180,7 +180,7 @@ class MailingService:
         try:
             await progress_message.edit_text(
                 f"✅ <b>Рассылка завершена!</b>\n\n"
-                f"📨 Рассылка: {mailing.title}\n"
+                f"📨 Рассылка: {mailing['title']}\n"
                 f"🎯 Целевая группа: {target_name}\n"
                 f"👥 Всего получателей: {total_count}\n"
                 f"✅ Успешно отправлено: {success_count}\n"

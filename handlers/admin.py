@@ -1,10 +1,11 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from services.database import db
 from services.mailing import MailingService
+from services.excel_export import ExcelExporter  # Добавляем импорт
 from utils.helpers import (
     get_admin_main_keyboard,
     get_stats_keyboard,
@@ -14,11 +15,11 @@ from utils.helpers import (
     get_back_keyboard,
     format_stats_overview,
     format_users_stats,
-    format_mailings_stats,
-    get_mailing_actions_keyboard
+    format_mailings_stats
 )
 import config
 from datetime import datetime, timedelta
+import os
 
 router = Router()
 
@@ -514,3 +515,52 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_admin_main_keyboard(),
         parse_mode="HTML"
     )
+
+# Добавляем новый обработчик для экспорта в Excel
+@router.callback_query(F.data == "export_excel")
+async def export_to_excel(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        await callback.message.edit_text("📊 Генерируем Excel отчет... Это может занять несколько секунд.")
+        
+        exporter = ExcelExporter()
+        filepath = exporter.generate_full_report()
+        
+        # Отправляем файл
+        file = FSInputFile(filepath)
+        await bot.send_document(
+            chat_id=callback.from_user.id,
+            document=file,
+            caption="📊 <b>Полный отчет бота</b>\n\n"
+                   "Файл содержит следующие листы:\n"
+                   "• Пользователи - все данные пользователей\n"
+                   "• Рассылки - информация о всех рассылках\n"
+                   "• Статистика рассылок - эффективность рассылок\n"
+                   "• Общая статистика - сводные данные\n"
+                   "• Активность пользователей - анализ активности",
+            parse_mode="HTML"
+        )
+        
+        # Удаляем временный файл после отправки
+        try:
+            os.remove(filepath)
+        except:
+            pass
+            
+        # Очищаем старые экспорты
+        exporter.cleanup_old_exports()
+        
+        await callback.message.edit_text(
+            "✅ <b>Excel отчет успешно сгенерирован и отправлен!</b>",
+            parse_mode="HTML",
+            reply_markup=get_back_keyboard("admin_stats")
+        )
+        
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при генерации отчета: {e}",
+            reply_markup=get_back_keyboard("admin_stats")
+        )

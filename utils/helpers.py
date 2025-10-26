@@ -13,11 +13,12 @@ def get_admin_main_keyboard():
     return keyboard.as_markup()
 
 def get_stats_keyboard():
-    """Меню статистики"""
+    """Меню статистики с кнопкой экспорта"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="📈 Общая статистика", callback_data="stats_overview"))
     keyboard.add(InlineKeyboardButton(text="📊 Статистика рассылок", callback_data="stats_mailings"))
     keyboard.add(InlineKeyboardButton(text="👤 Статистика пользователей", callback_data="stats_users"))
+    keyboard.add(InlineKeyboardButton(text="📁 Экспорт в Excel", callback_data="export_excel"))
     keyboard.add(InlineKeyboardButton(text="🔙 Главное меню", callback_data="admin_main"))
     keyboard.adjust(1)
     return keyboard.as_markup()

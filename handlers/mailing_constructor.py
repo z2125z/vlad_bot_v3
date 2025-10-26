@@ -14,7 +14,7 @@ class MailingConstructor(StatesGroup):
     waiting_for_media = State()
     waiting_for_confirmation = State()
 
-# Начало создания рассылки
+# Начало создания рассылки - ИСПРАВЛЕННАЯ ВЕРСИЯ
 @router.callback_query(F.data == "create_mailing")
 async def create_mailing_start(callback: CallbackQuery, state: FSMContext):
     if not callback.from_user.id in config.ADMIN_IDS:
@@ -22,12 +22,13 @@ async def create_mailing_start(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.set_state(MailingConstructor.waiting_for_title)
-    await callback.message.answer(  # Используем answer вместо edit_text
+    await callback.message.answer(  # Используем answer для нового сообщения
         "📝 <b>Создание новой рассылки</b>\n\n"
         "Введите название рассылки:",
         reply_markup=get_back_keyboard("admin_mailings"),
         parse_mode="HTML"
     )
+    await callback.answer()  # Важно: закрываем callback
 
 # Получение названия
 @router.message(MailingConstructor.waiting_for_title)
@@ -83,6 +84,7 @@ async def mailing_select_media_type(callback: CallbackQuery, state: FSMContext):
             f"📎 Отправьте {media_names.get(media_type, 'медиа')} для рассылки:",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
 # Получение медиа-файла
 @router.message(
@@ -122,18 +124,6 @@ async def mailing_get_media(message: Message, state: FSMContext):
     else:
         await message.answer(f"❌ Вы отправили неверный тип медиа. Ожидается: {media_type}")
 
-# Пропуск медиа (если передумали) - обработка кнопки "Назад"
-@router.callback_query(MailingConstructor.waiting_for_media, F.data == "admin_mailings")
-async def mailing_back_from_media(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    from utils.helpers import get_mailings_keyboard
-    await callback.message.edit_text(
-        "📨 <b>Управление рассылками</b>\n\n"
-        "Выберите действие:",
-        reply_markup=get_mailings_keyboard(),
-        parse_mode="HTML"
-    )
-
 # Финальный шаг - предпросмотр и сохранение
 async def mailing_finalize(update, state: FSMContext):
     data = await state.get_data()
@@ -163,61 +153,64 @@ async def mailing_finalize(update, state: FSMContext):
     # Отправляем превью
     if update.__class__.__name__ == "CallbackQuery":
         message = update.message
-        send_method = message.edit_text
-    else:
-        message = update
-        send_method = message.answer
-    
-    try:
-        if mailing.message_type == "text":
-            await send_method(
-                preview_text,
-                parse_mode="HTML",
-                reply_markup=get_mailing_preview_keyboard(mailing.id)
-            )
-        elif mailing.message_type == "photo":
-            await message.answer_photo(
-                mailing.media_file_id,
-                caption=preview_text,
-                parse_mode="HTML",
-                reply_markup=get_mailing_preview_keyboard(mailing.id)
-            )
-        elif mailing.message_type == "video":
-            await message.answer_video(
-                mailing.media_file_id,
-                caption=preview_text,
-                parse_mode="HTML",
-                reply_markup=get_mailing_preview_keyboard(mailing.id)
-            )
-        elif mailing.message_type == "document":
-            await message.answer_document(
-                mailing.media_file_id,
-                caption=preview_text,
-                parse_mode="HTML",
-                reply_markup=get_mailing_preview_keyboard(mailing.id)
-            )
-        elif mailing.message_type == "voice":
-            await message.answer_voice(
-                mailing.media_file_id,
-                caption=preview_text,
-                parse_mode="HTML",
-                reply_markup=get_mailing_preview_keyboard(mailing.id)
-            )
-        elif mailing.message_type == "video_note":
-            await message.answer_video_note(
-                mailing.media_file_id
-            )
-            await message.answer(
-                preview_text,
-                parse_mode="HTML",
-                reply_markup=get_mailing_preview_keyboard(mailing.id)
-            )
-    except Exception as e:
-        await message.answer(
-            f"❌ Ошибка отображения превью: {e}\n\n"
-            f"📝 Текст рассылки: {mailing.message_text[:500]}...",
+        await message.answer(  # Всегда используем answer для нового сообщения
+            preview_text,
+            parse_mode="HTML",
             reply_markup=get_mailing_preview_keyboard(mailing.id)
         )
+    else:
+        message = update
+        # Для разных типов контента отправляем по-разному
+        try:
+            if mailing.message_type == "text":
+                await message.answer(
+                    preview_text,
+                    parse_mode="HTML",
+                    reply_markup=get_mailing_preview_keyboard(mailing.id)
+                )
+            elif mailing.message_type == "photo":
+                await message.answer_photo(
+                    mailing.media_file_id,
+                    caption=preview_text,
+                    parse_mode="HTML",
+                    reply_markup=get_mailing_preview_keyboard(mailing.id)
+                )
+            elif mailing.message_type == "video":
+                await message.answer_video(
+                    mailing.media_file_id,
+                    caption=preview_text,
+                    parse_mode="HTML",
+                    reply_markup=get_mailing_preview_keyboard(mailing.id)
+                )
+            elif mailing.message_type == "document":
+                await message.answer_document(
+                    mailing.media_file_id,
+                    caption=preview_text,
+                    parse_mode="HTML",
+                    reply_markup=get_mailing_preview_keyboard(mailing.id)
+                )
+            elif mailing.message_type == "voice":
+                await message.answer_voice(
+                    mailing.media_file_id,
+                    caption=preview_text,
+                    parse_mode="HTML",
+                    reply_markup=get_mailing_preview_keyboard(mailing.id)
+                )
+            elif mailing.message_type == "video_note":
+                await message.answer_video_note(
+                    mailing.media_file_id
+                )
+                await message.answer(
+                    preview_text,
+                    parse_mode="HTML",
+                    reply_markup=get_mailing_preview_keyboard(mailing.id)
+                )
+        except Exception as e:
+            await message.answer(
+                f"❌ Ошибка отображения превью: {e}\n\n"
+                f"📝 Текст рассылки: {mailing.message_text[:500]}...",
+                reply_markup=get_mailing_preview_keyboard(mailing.id)
+            )
 
 # Сохранение как черновика
 @router.callback_query(F.data.startswith("save_draft_"))
@@ -280,7 +273,7 @@ async def send_mailing_now(callback: CallbackQuery, state: FSMContext, bot: Bot)
         )
 
 # Выход из конструктора
-@router.callback_query(MailingConstructor.waiting_for_confirmation, F.data == "admin_mailings")
+@router.callback_query(F.data == "admin_mailings")
 async def exit_constructor(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     from utils.helpers import get_mailings_keyboard

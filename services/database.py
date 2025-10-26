@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from datetime import datetime, timedelta
 import config
 import json
+import pytz
 
 Base = declarative_base()
 
@@ -52,7 +53,7 @@ class MailingStats(Base):
 class Database:
     def __init__(self):
         self.engine = create_engine(config.DATABASE_URL)
-        self._create_tables()  # Создаем таблицы если их нет
+        self._create_tables()
         Session = scoped_session(sessionmaker(bind=self.engine))
         self.session = Session()
 
@@ -64,10 +65,17 @@ class Database:
         except Exception as e:
             print(f"Ошибка при создании таблиц: {e}")
 
+    def _get_moscow_time(self):
+        """Локальный импорт для избежания циклических импортов"""
+        from utils.timezone import get_moscow_time, utc_to_moscow, moscow_to_utc
+        return get_moscow_time(), utc_to_moscow, moscow_to_utc
+
     def _get_mailing_dict(self, mailing):
-        """Преобразует объект Mailing в словарь с декодированными кнопками"""
+        """Преобразует объект Mailing в словарь с московским временем"""
         if not mailing:
             return None
+            
+        _, utc_to_moscow, _ = self._get_moscow_time()
             
         mailing_dict = {
             'id': mailing.id,
@@ -76,11 +84,10 @@ class Database:
             'message_type': mailing.message_type,
             'media_file_id': mailing.media_file_id,
             'status': mailing.status,
-            'created_at': mailing.created_at,
-            'updated_at': mailing.updated_at
+            'created_at': utc_to_moscow(mailing.created_at) if mailing.created_at else None,
+            'updated_at': utc_to_moscow(mailing.updated_at) if mailing.updated_at else None
         }
         
-        # Декодируем кнопки
         if mailing.buttons:
             try:
                 mailing_dict['buttons'] = json.loads(mailing.buttons)
@@ -123,10 +130,16 @@ class Database:
 
     def get_active_users_today(self):
         try:
-            today = datetime.utcnow().date()
+            # Используем локальный импорт
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            today_moscow = get_moscow_time().date()
+            today_start = moscow_to_utc(datetime.combine(today_moscow, datetime.min.time()))
+            today_end = moscow_to_utc(datetime.combine(today_moscow, datetime.max.time()))
+            
             return self.session.query(User).filter(
                 User.is_active == True,
-                User.last_activity >= today
+                User.last_activity >= today_start,
+                User.last_activity <= today_end
             ).all()
         except Exception as e:
             print(f"Ошибка при получении активных пользователей: {e}")
@@ -134,7 +147,8 @@ class Database:
 
     def get_new_users(self, days: int = 7):
         try:
-            since_date = datetime.utcnow() - timedelta(days=days)
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
             return self.session.query(User).filter(
                 User.joined_at >= since_date
             ).all()
@@ -151,10 +165,15 @@ class Database:
 
     def get_active_users_count_today(self):
         try:
-            today = datetime.utcnow().date()
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            today_moscow = get_moscow_time().date()
+            today_start = moscow_to_utc(datetime.combine(today_moscow, datetime.min.time()))
+            today_end = moscow_to_utc(datetime.combine(today_moscow, datetime.max.time()))
+            
             return self.session.query(User).filter(
                 User.is_active == True,
-                User.last_activity >= today
+                User.last_activity >= today_start,
+                User.last_activity <= today_end
             ).count()
         except Exception as e:
             print(f"Ошибка при подсчете активных пользователей: {e}")
@@ -162,7 +181,8 @@ class Database:
 
     def get_active_users_count_week(self):
         try:
-            week_ago = datetime.utcnow() - timedelta(days=7)
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            week_ago = moscow_to_utc(get_moscow_time() - timedelta(days=7))
             return self.session.query(User).filter(
                 User.is_active == True,
                 User.last_activity >= week_ago
@@ -173,7 +193,8 @@ class Database:
 
     def get_new_users_count(self, days: int = 1):
         try:
-            since_date = datetime.utcnow() - timedelta(days=days)
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
             return self.session.query(User).filter(
                 User.joined_at >= since_date
             ).count()
@@ -184,7 +205,6 @@ class Database:
     def create_mailing(self, title: str, message_text: str, message_type: str = "text", 
                       media_file_id: str = None, buttons: list = None, status: str = "draft"):
         try:
-            # Преобразуем кнопки в JSON строку
             buttons_json = json.dumps(buttons or [])
             
             mailing = Mailing(

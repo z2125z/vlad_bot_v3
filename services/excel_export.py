@@ -1,7 +1,7 @@
 import pandas as pd
-from datetime import datetime
 import os
 from services.database import db
+from utils.timezone import get_moscow_time, utc_to_moscow, format_moscow_time
 
 class ExcelExporter:
     def __init__(self):
@@ -10,26 +10,17 @@ class ExcelExporter:
             os.makedirs(self.export_dir)
 
     def generate_full_report(self):
-        """Генерация полного отчета в Excel с несколькими листами"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        """Генерация полного отчета в Excel с московским временем"""
+        timestamp = get_moscow_time().strftime("%Y%m%d_%H%M%S")
         filename = f"bot_statistics_{timestamp}.xlsx"
         filepath = os.path.join(self.export_dir, filename)
         
         try:
             with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-                # Лист 1: Пользователи
                 self._export_users(writer)
-                
-                # Лист 2: Рассылки
                 self._export_mailings(writer)
-                
-                # Лист 3: Статистика рассылок
                 self._export_mailing_stats(writer)
-                
-                # Лист 4: Общая статистика
                 self._export_detailed_stats(writer)
-                
-                # Лист 5: Активность пользователей
                 self._export_user_activity(writer)
             
             return filepath
@@ -38,7 +29,7 @@ class ExcelExporter:
             return None
 
     def _export_users(self, writer):
-        """Экспорт данных пользователей"""
+        """Экспорт данных пользователей с московским временем"""
         try:
             users = db.get_all_users()
             users_data = []
@@ -50,33 +41,20 @@ class ExcelExporter:
                     'Username': user.username or 'Нет',
                     'Full Name': user.full_name or 'Без имени',
                     'Active': 'Да' if user.is_active else 'Нет',
-                    'Joined': user.joined_at.strftime('%Y-%m-%d %H:%M') if user.joined_at else 'Неизвестно',
-                    'Last Activity': user.last_activity.strftime('%Y-%m-%d %H:%M') if user.last_activity else 'Никогда',
-                    'Days Since Join': (datetime.now() - user.joined_at).days if user.joined_at else 0
+                    'Joined': format_moscow_time(user.joined_at, '%Y-%m-%d %H:%M') if user.joined_at else 'Неизвестно',
+                    'Last Activity': format_moscow_time(user.last_activity, '%Y-%m-%d %H:%M') if user.last_activity else 'Никогда',
+                    'Days Since Join': (get_moscow_time() - utc_to_moscow(user.joined_at)).days if user.joined_at else 0
                 })
             
             if users_data:
                 df = pd.DataFrame(users_data)
                 df.to_excel(writer, sheet_name='Пользователи', index=False)
-                
-                # Форматирование
-                worksheet = writer.sheets['Пользователи']
-                for column in worksheet.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 50)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
+                self._auto_adjust_columns(writer.sheets['Пользователи'])
         except Exception as e:
             print(f"Ошибка при экспорте пользователей: {e}")
 
     def _export_mailings(self, writer):
-        """Экспорт данных рассылок"""
+        """Экспорт данных рассылок с московским временем"""
         try:
             mailings = db.get_all_mailings()
             mailings_data = []
@@ -88,7 +66,8 @@ class ExcelExporter:
                     'Title': mailing['title'],
                     'Type': mailing['message_type'],
                     'Status': mailing['status'],
-                    'Created': mailing['created_at'].strftime('%Y-%m-%d %H:%M') if mailing['created_at'] else '',
+                    'Created': format_moscow_time(mailing['created_at'], '%Y-%m-%d %H:%M') if mailing['created_at'] else '',
+                    'Updated': format_moscow_time(mailing['updated_at'], '%Y-%m-%d %H:%M') if mailing['updated_at'] else '',
                     'Text Length': len(mailing['message_text'] or ''),
                     'Has Media': 'Да' if mailing['media_file_id'] else 'Нет',
                     'Total Sent': stats['total_sent'],
@@ -100,25 +79,12 @@ class ExcelExporter:
             if mailings_data:
                 df = pd.DataFrame(mailings_data)
                 df.to_excel(writer, sheet_name='Рассылки', index=False)
-                
-                # Форматирование
-                worksheet = writer.sheets['Рассылки']
-                for column in worksheet.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 50)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
+                self._auto_adjust_columns(writer.sheets['Рассылки'])
         except Exception as e:
             print(f"Ошибка при экспорте рассылок: {e}")
 
     def _export_mailing_stats(self, writer):
-        """Экспорт статистики рассылок"""
+        """Экспорт статистики рассылок с московским временем"""
         try:
             mailings = db.get_all_mailings()
             stats_data = []
@@ -142,31 +108,18 @@ class ExcelExporter:
                     'Delivery Rate': f"{delivery_rate:.1f}%",
                     'Read Rate': f"{read_rate:.1f}%",
                     'Success Rate': f"{stats['success_rate']:.1f}%",
-                    'Created': mailing['created_at'].strftime('%Y-%m-%d') if mailing['created_at'] else ''
+                    'Created': format_moscow_time(mailing['created_at'], '%Y-%m-%d') if mailing['created_at'] else ''
                 })
             
             if stats_data:
                 df = pd.DataFrame(stats_data)
                 df.to_excel(writer, sheet_name='Статистика рассылок', index=False)
-                
-                # Форматирование
-                worksheet = writer.sheets['Статистика рассылок']
-                for column in worksheet.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 30)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
+                self._auto_adjust_columns(writer.sheets['Статистика рассылок'])
         except Exception as e:
             print(f"Ошибка при экспорте статистики рассылок: {e}")
 
     def _export_detailed_stats(self, writer):
-        """Экспорт детальной статистики"""
+        """Экспорт детальной статистики с московским временем"""
         try:
             # Общая статистика
             total_users = db.get_user_count()
@@ -217,43 +170,38 @@ class ExcelExporter:
                 'Metric': 'Archived Mailings',
                 'Value': len(archived_mailings),
                 'Description': 'В архиве'
+            }, {
+                'Metric': 'Report Generated',
+                'Value': format_moscow_time(get_moscow_time(), '%Y-%m-%d %H:%M'),
+                'Description': 'Отчет сгенерирован'
             }]
             
             df_summary = pd.DataFrame(summary_data)
             df_summary.to_excel(writer, sheet_name='Общая статистика', index=False)
-            
-            # Форматирование
-            worksheet = writer.sheets['Общая статистика']
-            for column in worksheet.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
-                    except:
-                        pass
-                adjusted_width = min(max_length + 2, 30)
-                worksheet.column_dimensions[column_letter].width = adjusted_width
+            self._auto_adjust_columns(writer.sheets['Общая статистика'])
         except Exception as e:
             print(f"Ошибка при экспорте детальной статистики: {e}")
 
     def _export_user_activity(self, writer):
-        """Экспорт активности пользователей"""
+        """Экспорт активности пользователей с московским временем"""
         try:
             users = db.get_all_users()
             activity_data = []
+            current_time = get_moscow_time()
             
             for user in users:
-                days_since_join = (datetime.now() - user.joined_at).days if user.joined_at else 0
-                days_since_activity = (datetime.now() - user.last_activity).days if user.last_activity else 999
+                user_joined = utc_to_moscow(user.joined_at) if user.joined_at else None
+                user_last_activity = utc_to_moscow(user.last_activity) if user.last_activity else None
+                
+                days_since_join = (current_time - user_joined).days if user_joined else 0
+                days_since_activity = (current_time - user_last_activity).days if user_last_activity else 999
                 
                 activity_data.append({
                     'User ID': user.user_id,
                     'Username': user.username or 'Нет',
                     'Full Name': user.full_name or 'Без имени',
-                    'Joined': user.joined_at.strftime('%Y-%m-%d') if user.joined_at else 'Неизвестно',
-                    'Last Activity': user.last_activity.strftime('%Y-%m-%d %H:%M') if user.last_activity else 'Никогда',
+                    'Joined': format_moscow_time(user_joined, '%Y-%m-%d') if user_joined else 'Неизвестно',
+                    'Last Activity': format_moscow_time(user_last_activity, '%Y-%m-%d %H:%M') if user_last_activity else 'Никогда',
                     'Days Since Join': days_since_join,
                     'Days Since Activity': days_since_activity,
                     'Status': 'Active' if user.is_active else 'Inactive',
@@ -263,22 +211,23 @@ class ExcelExporter:
             if activity_data:
                 df = pd.DataFrame(activity_data)
                 df.to_excel(writer, sheet_name='Активность пользователей', index=False)
-                
-                # Форматирование
-                worksheet = writer.sheets['Активность пользователей']
-                for column in worksheet.columns:
-                    max_length = 0
-                    column_letter = column[0].column_letter
-                    for cell in column:
-                        try:
-                            if len(str(cell.value)) > max_length:
-                                max_length = len(str(cell.value))
-                        except:
-                            pass
-                    adjusted_width = min(max_length + 2, 25)
-                    worksheet.column_dimensions[column_letter].width = adjusted_width
+                self._auto_adjust_columns(writer.sheets['Активность пользователей'])
         except Exception as e:
             print(f"Ошибка при экспорте активности пользователей: {e}")
+
+    def _auto_adjust_columns(self, worksheet):
+        """Автоматическая настройка ширины колонок"""
+        for column in worksheet.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            worksheet.column_dimensions[column_letter].width = adjusted_width
 
     def _get_activity_level(self, days_since_activity):
         """Определение уровня активности"""
@@ -298,15 +247,13 @@ class ExcelExporter:
             return 'Inactive'
 
     def cleanup_old_exports(self, keep_last_n=10):
-        """Удаление старых экспортов, оставляя только последние N файлов"""
+        """Удаление старых экспортов"""
         try:
             files = [os.path.join(self.export_dir, f) for f in os.listdir(self.export_dir) 
                     if f.startswith('bot_statistics_') and f.endswith('.xlsx')]
             
-            # Сортируем по времени изменения (новые сначала)
             files.sort(key=os.path.getmtime, reverse=True)
             
-            # Удаляем старые файлы
             for file_to_delete in files[keep_last_n:]:
                 os.remove(file_to_delete)
                 print(f"Удален старый файл экспорта: {file_to_delete}")

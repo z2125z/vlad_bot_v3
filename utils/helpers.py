@@ -1,7 +1,6 @@
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from services.database import db
-from datetime import datetime
+from utils.timezone import format_moscow_time
 
 def get_admin_main_keyboard():
     """Главное меню админ-панели"""
@@ -105,9 +104,20 @@ def get_mailing_preview_keyboard(mailing_id: int):
     keyboard.adjust(1)
     return keyboard.as_markup()
 
+def get_skip_edit_keyboard(mailing_id: int):
+    """Клавиатура для пропуска редактирования медиа"""
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(InlineKeyboardButton(text="⏭️ Пропустить", callback_data=f"skip_edit_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data=f"view_mailing_{mailing_id}"))
+    keyboard.adjust(1)
+    return keyboard.as_markup()
+
+# Функции, которые используют db, будут импортировать его внутри себя
 def format_stats_overview():
-    """Форматирование общей статистики"""
+    """Форматирование общей статистики с московским временем"""
     try:
+        from services.database import db  # Локальный импорт для избежания циклических импортов
+        
         users_count = db.get_user_count()
         active_today = db.get_active_users_count_today()
         all_mailings = len(db.get_all_mailings())
@@ -125,33 +135,49 @@ def format_stats_overview():
    • Всего: <b>{all_mailings}</b>
    • Активных: <b>{active_mailings}</b>
 
-⏱️ <b>Обновлено:</b> {datetime.now().strftime('%H:%M %d.%m.%Y')}
+⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
         return f"❌ Ошибка при загрузке статистики: {e}"
 
 def format_users_stats():
     """Форматирование статистики пользователей"""
-    users_count = db.get_user_count()
-    active_today = db.get_active_users_count_today()
-    active_week = db.get_active_users_count_week()
-    
-    return f"""
+    try:
+        from services.database import db  # Локальный импорт
+        
+        users_count = db.get_user_count()
+        active_today = db.get_active_users_count_today()
+        active_week = db.get_active_users_count_week()
+        new_today = db.get_new_users_count(days=1)
+        new_week = db.get_new_users_count(days=7)
+        
+        today_rate = (active_today / users_count * 100) if users_count > 0 else 0
+        week_rate = (active_week / users_count * 100) if users_count > 0 else 0
+        
+        return f"""
 👥 <b>Статистика пользователей</b>
 
 📈 <b>Общее:</b>
    • Всего пользователей: <b>{users_count}</b>
    • Активных сегодня: <b>{active_today}</b>
    • Активных за неделю: <b>{active_week}</b>
+   • Новых сегодня: <b>{new_today}</b>
+   • Новых за неделю: <b>{new_week}</b>
 
 📊 <b>Активность:</b>
-   • Сегодня: <b>{(active_today/users_count*100 if users_count > 0 else 0):.1f}%</b>
-   • За неделю: <b>{(active_week/users_count*100 if users_count > 0 else 0):.1f}%</b>
+   • Сегодня: <b>{today_rate:.1f}%</b>
+   • За неделю: <b>{week_rate:.1f}%</b>
+
+⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
+    except Exception as e:
+        return f"❌ Ошибка при загрузке статистики пользователей: {e}"
 
 def format_mailings_stats():
-    """Форматирование статистики рассылок"""
+    """Форматирование статистики рассылок с московским временем"""
     try:
+        from services.database import db  # Локальный импорт
+        
         all_mailings = db.get_all_mailings()
         active_mailings = db.get_mailings_by_status('active')
         draft_mailings = db.get_mailings_by_status('draft')
@@ -159,11 +185,16 @@ def format_mailings_stats():
         
         total_sent = 0
         total_delivered = 0
+        total_read = 0
         
         for mailing in all_mailings:
             stats = db.get_mailing_stats(mailing['id'])
             total_sent += stats['total_sent']
             total_delivered += stats['delivered']
+            total_read += stats['read']
+        
+        overall_success_rate = (total_delivered / total_sent * 100) if total_sent > 0 else 0
+        overall_read_rate = (total_read / total_sent * 100) if total_sent > 0 else 0
         
         return f"""
 📨 <b>Статистика рассылок</b>
@@ -177,36 +208,44 @@ def format_mailings_stats():
 📊 <b>Эффективность:</b>
    • Всего отправлено: <b>{total_sent}</b>
    • Доставлено: <b>{total_delivered}</b>
-   • Общий успех: <b>{(total_delivered/total_sent*100 if total_sent > 0 else 0):.1f}%</b>
+   • Прочитано: <b>{total_read}</b>
+   • Успех доставки: <b>{overall_success_rate:.1f}%</b>
+   • Процент прочтения: <b>{overall_read_rate:.1f}%</b>
+
+⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
         return f"❌ Ошибка при загрузке статистики рассылок: {e}"
 
 def format_mailing_preview(mailing):
-    """Форматирование превью рассылки"""
-    type_emojis = {
-        'text': '📝',
-        'photo': '🖼️',
-        'video': '🎥',
-        'document': '📎',
-        'voice': '🎤',
-        'video_note': '📹'
-    }
-    
-    status_texts = {
-        'draft': '📝 Черновик',
-        'active': '✅ Активна',
-        'archived': '📁 В архиве'
-    }
-    
-    stats = db.get_mailing_stats(mailing['id'])
-    
-    message_text = mailing['message_text']
-    preview_text = message_text[:200] + '...' if len(message_text) > 200 else message_text
-    
-    created_at = mailing['created_at'].strftime('%d.%m.%Y %H:%M') if mailing['created_at'] else 'неизвестно'
-    
-    return f"""
+    """Форматирование превью рассылки с московским временем"""
+    try:
+        from services.database import db  # Локальный импорт
+        
+        type_emojis = {
+            'text': '📝',
+            'photo': '🖼️',
+            'video': '🎥',
+            'document': '📎',
+            'voice': '🎤',
+            'video_note': '📹'
+        }
+        
+        status_texts = {
+            'draft': '📝 Черновик',
+            'active': '✅ Активна',
+            'archived': '📁 В архиве'
+        }
+        
+        stats = db.get_mailing_stats(mailing['id'])
+        
+        message_text = mailing['message_text']
+        preview_text = message_text[:200] + '...' if len(message_text) > 200 else message_text
+        
+        created_at = format_moscow_time(mailing['created_at']) if mailing['created_at'] else 'неизвестно'
+        updated_at = format_moscow_time(mailing['updated_at']) if mailing['updated_at'] else 'неизвестно'
+        
+        return f"""
 {type_emojis.get(mailing['message_type'], '📝')} <b>Просмотр рассылки</b>
 
 📋 <b>Название:</b> {mailing['title']}
@@ -215,12 +254,7 @@ def format_mailing_preview(mailing):
 📊 <b>Статус:</b> {status_texts.get(mailing['status'], mailing['status'])}
 📈 <b>Статистика:</b> Отправлено: {stats['total_sent']}, Успешно: {stats['delivered']}
 ⏰ <b>Создана:</b> {created_at}
+🔄 <b>Обновлена:</b> {updated_at}
 """
-
-def get_skip_edit_keyboard(mailing_id: int):
-    """Клавиатура для пропуска редактирования медиа"""
-    keyboard = InlineKeyboardBuilder()
-    keyboard.add(InlineKeyboardButton(text="⏭️ Пропустить", callback_data=f"skip_edit_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data=f"view_mailing_{mailing_id}"))
-    keyboard.adjust(1)
-    return keyboard.as_markup()
+    except Exception as e:
+        return f"❌ Ошибка при форматировании превью рассылки: {e}"

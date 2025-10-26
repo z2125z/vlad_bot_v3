@@ -3,22 +3,15 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, FSInputF
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from services.database import db
-from services.mailing import MailingService
-from services.excel_export import ExcelExporter
 from utils.helpers import (
     get_admin_main_keyboard,
     get_stats_keyboard,
     get_mailings_keyboard,
     get_users_keyboard,
     get_target_groups_keyboard,
-    get_back_keyboard,
-    format_stats_overview,
-    format_users_stats,
-    format_mailings_stats
+    get_back_keyboard
 )
 import config
-from datetime import datetime, timedelta
 import os
 
 router = Router()
@@ -62,6 +55,7 @@ async def stats_overview(callback: CallbackQuery):
         return
     
     try:
+        from utils.helpers import format_stats_overview
         stats_text = format_stats_overview()
         await callback.message.edit_text(
             stats_text,
@@ -82,6 +76,7 @@ async def stats_users(callback: CallbackQuery):
         return
     
     try:
+        from utils.helpers import format_users_stats
         stats_text = format_users_stats()
         await callback.message.edit_text(
             stats_text,
@@ -102,6 +97,7 @@ async def stats_mailings(callback: CallbackQuery):
         return
     
     try:
+        from utils.helpers import format_mailings_stats
         stats_text = format_mailings_stats()
         await callback.message.edit_text(
             stats_text,
@@ -136,6 +132,8 @@ async def mailings_active(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         mailings = db.get_mailings_by_status('active')
         
         if not mailings:
@@ -184,6 +182,8 @@ async def mailings_drafts(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         mailings = db.get_mailings_by_status('draft')
         
         if not mailings:
@@ -230,6 +230,8 @@ async def mailings_archive(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         mailings = db.get_mailings_by_status('archived')
         
         if not mailings:
@@ -278,6 +280,8 @@ async def mailings_send(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         active_mailings = db.get_mailings_by_status('active')
         
         if not active_mailings:
@@ -318,6 +322,8 @@ async def select_mailing_target(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         mailing_id = int(callback.data.replace("select_mailing_", ""))
         mailing = db.get_mailing(mailing_id)
         
@@ -353,6 +359,8 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
         return
     
     try:
+        from services.database import db
+        
         data_parts = callback.data.split("_")
         if len(data_parts) < 3:
             await callback.answer("❌ Ошибка в данных")
@@ -366,6 +374,7 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
             await callback.answer("❌ Рассылка не найдена")
             return
         
+        from services.mailing import MailingService
         mailing_service = MailingService(bot)
         
         await callback.message.edit_text("🔄 Начинаю рассылку...")
@@ -427,6 +436,8 @@ async def users_list(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         users = db.get_all_users()[:50]  # Ограничим показ 50 пользователями
         
         if not users:
@@ -466,6 +477,8 @@ async def users_active_today(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         users = db.get_active_users_today()[:20]  # Ограничим показ
         
         if not users:
@@ -503,6 +516,8 @@ async def users_analytics(callback: CallbackQuery):
         return
     
     try:
+        from services.database import db
+        
         total_users = db.get_user_count()
         active_today = db.get_active_users_count_today()
         active_week = db.get_active_users_count_week()
@@ -552,7 +567,7 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
 
-# Новый exel v2
+# Добавляем новый обработчик для экспорта в Excel
 @router.callback_query(F.data == "export_excel")
 async def export_to_excel(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
@@ -562,6 +577,7 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
     try:
         await callback.message.edit_text("📊 Генерируем Excel отчет... Это может занять несколько секунд.")
         
+        from services.excel_export import ExcelExporter
         exporter = ExcelExporter()
         filepath = exporter.generate_full_report()
         
@@ -607,48 +623,106 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
             f"❌ Ошибка при генерации отчета: {e}",
             reply_markup=get_back_keyboard("admin_stats")
         )
+
+# Просмотр конкретной рассылки
+@router.callback_query(F.data.startswith("view_mailing_"))
+async def view_mailing(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
     try:
-        await callback.message.edit_text("📊 Генерируем Excel отчет... Это может занять несколько секунд.")
+        from services.database import db
+        from utils.helpers import format_mailing_preview, get_mailing_actions_keyboard
         
-        exporter = ExcelExporter()
-        filepath = exporter.generate_full_report()
+        mailing_id = int(callback.data.replace("view_mailing_", ""))
+        mailing = db.get_mailing(mailing_id)
         
-        # Отправляем файл
-        file = FSInputFile(filepath)
-        await bot.send_document(
-            chat_id=callback.from_user.id,
-            document=file,
-            caption="📊 <b>Полный отчет бота</b>\n\n"
-                   "Файл содержит следующие листы:\n"
-                   "• Пользователи - все данные пользователей\n"
-                   "• Рассылки - информация о всех рассылках\n"
-                   "• Статистика рассылок - эффективность рассылок\n"
-                   "• Общая статистика - сводные данные\n"
-                   "• Активность пользователей - анализ активности",
-            parse_mode="HTML"
-        )
+        if not mailing:
+            await callback.answer("❌ Рассылка не найдена")
+            return
         
-        # Удаляем временный файл после отправки
-        try:
-            os.remove(filepath)
-        except:
-            pass
-            
-        # Очищаем старые экспорты
-        exporter.cleanup_old_exports()
-        
+        preview_text = format_mailing_preview(mailing)
         await callback.message.edit_text(
-            "✅ <b>Excel отчет успешно сгенерирован и отправлен!</b>",
+            preview_text,
             parse_mode="HTML",
-            reply_markup=get_back_keyboard("admin_stats")
+            reply_markup=get_mailing_actions_keyboard(mailing_id, mailing['status'])
         )
-        
+        await callback.answer()
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при генерации отчета: {e}",
-            reply_markup=get_back_keyboard("admin_stats")
+            f"❌ Ошибка при загрузке рассылки: {e}",
+            reply_markup=get_back_keyboard("admin_mailings")
+        )
+
+# Архивирование рассылки
+@router.callback_query(F.data.startswith("archive_mailing_"))
+async def archive_mailing(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.database import db
+        
+        mailing_id = int(callback.data.replace("archive_mailing_", ""))
+        db.change_mailing_status(mailing_id, "archived")
+        
+        await callback.answer("✅ Рассылка перемещена в архив")
+        await callback.message.edit_text(
+            "✅ Рассылка перемещена в архив",
+            reply_markup=get_back_keyboard("admin_mailings")
+        )
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при архивировании рассылки: {e}",
+            reply_markup=get_back_keyboard("admin_mailings")
+        )
+
+# Активация рассылки
+@router.callback_query(F.data.startswith("activate_mailing_"))
+async def activate_mailing(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.database import db
+        
+        mailing_id = int(callback.data.replace("activate_mailing_", ""))
+        db.change_mailing_status(mailing_id, "active")
+        
+        await callback.answer("✅ Рассылка активирована")
+        await callback.message.edit_text(
+            "✅ Рассылка активирована и готова к отправке",
+            reply_markup=get_back_keyboard("admin_mailings")
+        )
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при активации рассылки: {e}",
+            reply_markup=get_back_keyboard("admin_mailings")
+        )
+
+# Удаление рассылки
+@router.callback_query(F.data.startswith("delete_mailing_"))
+async def delete_mailing(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.database import db
+        
+        mailing_id = int(callback.data.replace("delete_mailing_", ""))
+        db.change_mailing_status(mailing_id, "deleted")
+        
+        await callback.answer("✅ Рассылка удалена")
+        await callback.message.edit_text(
+            "✅ Рассылка удалена",
+            reply_markup=get_back_keyboard("admin_mailings")
+        )
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при удалении рассылки: {e}",
+            reply_markup=get_back_keyboard("admin_mailings")
         )

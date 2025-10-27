@@ -82,10 +82,22 @@ def get_mailing_type_keyboard():
 def get_target_groups_keyboard(mailing_id: int):
     """Выбор целевой группы для рассылки"""
     keyboard = InlineKeyboardBuilder()
-    keyboard.add(InlineKeyboardButton(text="👥 Все пользователи", callback_data=f"target_all_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="📅 Активные сегодня", callback_data=f"target_active_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="🆕 Новые пользователи (7 дней)", callback_data=f"target_new_week_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="🆕 Новые пользователи (30 дней)", callback_data=f"target_new_month_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(
+        text="👥 Все пользователи", 
+        callback_data=f"target:all:{mailing_id}"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        text="📅 Активные сегодня", 
+        callback_data=f"target:active:{mailing_id}"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        text="🆕 Новые пользователи (7 дней)", 
+        callback_data=f"target:new_week:{mailing_id}"
+    ))
+    keyboard.add(InlineKeyboardButton(
+        text="🆕 Новые пользователи (30 дней)", 
+        callback_data=f"target:new_month:{mailing_id}"
+    ))
     keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="mailings_send"))
     keyboard.adjust(1)
     return keyboard.as_markup()
@@ -124,7 +136,16 @@ def get_skip_edit_keyboard(mailing_id: int):
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-# Функции, которые используют db, будут импортировать его внутри себя
+def get_logs_keyboard():
+    """Клавиатура для выбора логов"""
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(InlineKeyboardButton(text="📋 Текущий месяц", callback_data="logs_current"))
+    keyboard.add(InlineKeyboardButton(text="📋 Предыдущий месяц", callback_data="logs_previous"))
+    keyboard.add(InlineKeyboardButton(text="📋 Все логи", callback_data="logs_all"))
+    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+    keyboard.adjust(1)
+    return keyboard.as_markup()
+
 def format_stats_overview():
     """Форматирование общей статистики с московским временем"""
     try:
@@ -150,7 +171,7 @@ def format_stats_overview():
 ⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
-        return f"❌ Ошибка при загрузке статистики: {e}"
+        return f"❌ Ошибка при загрузке статистики: {str(e)}"
 
 def format_users_stats():
     """Форматирование статистики пользователей"""
@@ -161,7 +182,7 @@ def format_users_stats():
         active_today = db.get_active_users_count_today()
         active_week = db.get_active_users_count_week()
         new_today = db.get_new_users_count(days=1)
-        new_week = db.get_new_users_count(days=7)
+        new_week = db.get_new_users_count_week()
         
         today_rate = (active_today / users_count * 100) if users_count > 0 else 0
         week_rate = (active_week / users_count * 100) if users_count > 0 else 0
@@ -183,7 +204,7 @@ def format_users_stats():
 ⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
-        return f"❌ Ошибка при загрузке статистики пользователей: {e}"
+        return f"❌ Ошибка при загрузке статистики пользователей: {str(e)}"
 
 def format_mailings_stats():
     """Форматирование статистики рассылок с московским временем"""
@@ -227,17 +248,7 @@ def format_mailings_stats():
 ⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
-        return f"❌ Ошибка при загрузке статистики рассылок: {e}"
-
-def get_logs_keyboard():
-    """Клавиатура для выбора логов"""
-    keyboard = InlineKeyboardBuilder()
-    keyboard.add(InlineKeyboardButton(text="📋 Текущий месяц", callback_data="logs_current"))
-    keyboard.add(InlineKeyboardButton(text="📋 Предыдущий месяц", callback_data="logs_previous"))
-    keyboard.add(InlineKeyboardButton(text="📋 Все логи", callback_data="logs_all"))
-    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
-    keyboard.adjust(1)
-    return keyboard.as_markup()
+        return f"❌ Ошибка при загрузке статистики рассылок: {str(e)}"
 
 def format_mailing_preview(mailing):
     """Форматирование превью рассылки с московским временем"""
@@ -264,9 +275,9 @@ def format_mailing_preview(mailing):
         message_text = mailing['message_text']
         preview_text = message_text[:200] + '...' if len(message_text) > 200 else message_text
         
-        # ИСПРАВЛЕНИЕ: проверяем на None перед вызовом strftime
-        created_at = format_moscow_time(mailing['created_at']) if mailing.get('created_at') else 'неизвестно'
-        updated_at = format_moscow_time(mailing['updated_at']) if mailing.get('updated_at') else 'неизвестно'
+        # Безопасная работа с датами
+        created_at = format_moscow_time(mailing.get('created_at')) if mailing.get('created_at') else 'неизвестно'
+        updated_at = format_moscow_time(mailing.get('updated_at')) if mailing.get('updated_at') else 'неизвестно'
         
         return f"""
 {type_emojis.get(mailing['message_type'], '📝')} <b>Просмотр рассылки</b>
@@ -280,4 +291,4 @@ def format_mailing_preview(mailing):
 🔄 <b>Обновлена:</b> {updated_at}
 """
     except Exception as e:
-        return f"❌ Ошибка при форматировании превью рассылки: {e}"
+        return f"❌ Ошибка при форматировании превью рассылки: {str(e)}"

@@ -136,8 +136,14 @@ class Database:
         try:
             get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
             today_moscow = get_moscow_time().date()
-            today_start = moscow_to_utc(datetime.combine(today_moscow, datetime.min.time()))
-            today_end = moscow_to_utc(datetime.combine(today_moscow, datetime.max.time()))
+            
+            # Создаем datetime объекты в московском времени
+            today_start_naive = datetime.combine(today_moscow, datetime.min.time())
+            today_end_naive = datetime.combine(today_moscow, datetime.max.time())
+            
+            # Конвертируем в UTC для сравнения с данными в БД
+            today_start = moscow_to_utc(today_start_naive)
+            today_end = moscow_to_utc(today_end_naive)
             
             users = self.session.query(User).filter(
                 User.is_active == True,
@@ -175,8 +181,11 @@ class Database:
         try:
             get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
             today_moscow = get_moscow_time().date()
-            today_start = moscow_to_utc(datetime.combine(today_moscow, datetime.min.time()))
-            today_end = moscow_to_utc(datetime.combine(today_moscow, datetime.max.time()))
+            today_start_naive = datetime.combine(today_moscow, datetime.min.time())
+            today_end_naive = datetime.combine(today_moscow, datetime.max.time())
+            
+            today_start = moscow_to_utc(today_start_naive)
+            today_end = moscow_to_utc(today_end_naive)
             
             count = self.session.query(User).filter(
                 User.is_active == True,
@@ -212,6 +221,22 @@ class Database:
         except Exception as e:
             logger.error(f"Error counting new users for {days} days: {e}", exc_info=True)
             return 0
+
+    def get_new_users_count_week(self):
+        """Количество новых пользователей за неделю"""
+        return self.get_new_users_count(days=7)
+
+    def get_new_users_count_month(self):
+        """Количество новых пользователей за месяц"""
+        return self.get_new_users_count(days=30)
+
+    def get_new_users_week(self):
+        """Список новых пользователей за неделю"""
+        return self.get_new_users(days=7)
+
+    def get_new_users_month(self):
+        """Список новых пользователей за месяц"""
+        return self.get_new_users(days=30)
 
     def create_mailing(self, title: str, message_text: str, message_type: str = "text", 
                       media_file_id: str = None, buttons: list = None, status: str = "draft"):

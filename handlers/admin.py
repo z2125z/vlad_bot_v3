@@ -67,7 +67,7 @@ async def stats_overview(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке статистики: {e}",
+            f"❌ Ошибка при загрузке статистики: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
 
@@ -88,7 +88,7 @@ async def stats_users(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке статистики пользователей: {e}",
+            f"❌ Ошибка при загрузке статистики пользователей: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
 
@@ -109,7 +109,7 @@ async def stats_mailings(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке статистики рассылок: {e}",
+            f"❌ Ошибка при загрузке статистики рассылок: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
 
@@ -173,7 +173,7 @@ async def mailings_active(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке активных рассылок: {e}",
+            f"❌ Ошибка при загрузке активных рассылок: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -221,7 +221,7 @@ async def mailings_drafts(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке черновиков: {e}",
+            f"❌ Ошибка при загрузке черновиков: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -271,7 +271,7 @@ async def mailings_archive(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке архива: {e}",
+            f"❌ Ошибка при загрузке архива: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
         
@@ -313,7 +313,7 @@ async def mailings_send(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке рассылок: {e}",
+            f"❌ Ошибка при загрузке рассылок: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -352,12 +352,12 @@ async def select_mailing_target(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при выборе рассылки: {e}",
+            f"❌ Ошибка при выборе рассылки: {str(e)}",
             reply_markup=get_back_keyboard("mailings_send")
         )
 
-# Запуск рассылки
-@router.callback_query(F.data.startswith("target_"))
+# Запуск рассылки (новый обработчик с правильным форматом)
+@router.callback_query(F.data.startswith("target:"))
 async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
@@ -367,8 +367,9 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
         from services.database import db
         from utils.helpers import get_target_group_name
         
-        data_parts = callback.data.split("_")
-        if len(data_parts) < 3:
+        # Правильный разбор callback_data
+        data_parts = callback.data.split(":")
+        if len(data_parts) != 3:
             await callback.answer("❌ Ошибка в данных")
             return
             
@@ -406,8 +407,9 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
                 reply_markup=get_back_keyboard("admin_mailings")
             )
     except Exception as e:
+        logger.error(f"Error starting mailing broadcast: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при запуске рассылки: {e}",
+            f"❌ Ошибка при запуске рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -462,7 +464,7 @@ async def users_list(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке пользователей: {e}",
+            f"❌ Ошибка при загрузке пользователей: {str(e)}",
             reply_markup=get_back_keyboard("admin_users")
         )
 
@@ -501,7 +503,7 @@ async def users_active_today(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке активных пользователей: {e}",
+            f"❌ Ошибка при загрузке активных пользователей: {str(e)}",
             reply_markup=get_back_keyboard("admin_users")
         )
 
@@ -552,7 +554,7 @@ async def users_analytics(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке аналитики: {e}",
+            f"❌ Ошибка при загрузке аналитики: {str(e)}",
             reply_markup=get_back_keyboard("admin_users")
         )
 
@@ -620,7 +622,7 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
         
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при генерации отчета: {e}",
+            f"❌ Ошибка при генерации отчета: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
 
@@ -651,7 +653,7 @@ async def view_mailing(callback: CallbackQuery):
         await callback.answer()
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке рассылки: {e}",
+            f"❌ Ошибка при загрузке рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -675,7 +677,7 @@ async def archive_mailing(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при архивировании рассылки: {e}",
+            f"❌ Ошибка при архивировании рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -699,7 +701,7 @@ async def activate_mailing(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при активации рассылки: {e}",
+            f"❌ Ошибка при активации рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -723,7 +725,7 @@ async def delete_mailing(callback: CallbackQuery):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при удалении рассылки: {e}",
+            f"❌ Ошибка при удалении рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
 
@@ -753,9 +755,10 @@ async def send_specific_mailing(callback: CallbackQuery, bot: Bot):
         )
     except Exception as e:
         await callback.message.edit_text(
-            f"❌ Ошибка при выборе рассылки: {e}",
+            f"❌ Ошибка при выборе рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+
 # Добавляем новый обработчик для получения логов
 @router.callback_query(F.data == "get_logs")
 async def get_logs_menu(callback: CallbackQuery):
@@ -773,7 +776,7 @@ async def get_logs_menu(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in get_logs_menu: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке меню логов: {e}",
+            f"❌ Ошибка при загрузке меню логов: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
 
@@ -817,7 +820,7 @@ async def send_current_month_logs(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error sending current month logs: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при отправке логов: {e}",
+            f"❌ Ошибка при отправке логов: {str(e)}",
             reply_markup=get_back_keyboard("get_logs")
         )
 
@@ -863,7 +866,7 @@ async def send_previous_month_logs(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error sending previous month logs: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при отправке логов: {e}",
+            f"❌ Ошибка при отправке логов: {str(e)}",
             reply_markup=get_back_keyboard("get_logs")
         )
 
@@ -912,6 +915,6 @@ async def send_all_logs(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error sending all logs: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при отправке логов: {e}",
+            f"❌ Ошибка при отправке логов: {str(e)}",
             reply_markup=get_back_keyboard("get_logs")
         )

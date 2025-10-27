@@ -33,17 +33,28 @@ class ExcelExporter:
         try:
             users = db.get_all_users()
             users_data = []
+            current_time = get_moscow_time()
             
             for user in users:
+                user_joined = utc_to_moscow(user.joined_at) if user.joined_at else None
+                
+                # Безопасный расчет дней
+                days_since_join = 0
+                if user_joined:
+                    try:
+                        days_since_join = (current_time - user_joined).days
+                    except:
+                        days_since_join = 0
+                
                 users_data.append({
                     'ID': user.id,
                     'User ID': user.user_id,
                     'Username': user.username or 'Нет',
                     'Full Name': user.full_name or 'Без имени',
                     'Active': 'Да' if user.is_active else 'Нет',
-                    'Joined': format_moscow_time(user.joined_at, '%Y-%m-%d %H:%M') if user.joined_at else 'Неизвестно',
+                    'Joined': format_moscow_time(user_joined, '%Y-%m-%d %H:%M') if user_joined else 'Неизвестно',
                     'Last Activity': format_moscow_time(user.last_activity, '%Y-%m-%d %H:%M') if user.last_activity else 'Никогда',
-                    'Days Since Join': (get_moscow_time() - utc_to_moscow(user.joined_at)).days if user.joined_at else 0
+                    'Days Since Join': days_since_join
                 })
             
             if users_data:
@@ -61,13 +72,18 @@ class ExcelExporter:
             
             for mailing in mailings:
                 stats = db.get_mailing_stats(mailing['id'])
+                
+                # Безопасное форматирование времени
+                created_at = format_moscow_time(mailing.get('created_at'), '%Y-%m-%d %H:%M') if mailing.get('created_at') else ''
+                updated_at = format_moscow_time(mailing.get('updated_at'), '%Y-%m-%d %H:%M') if mailing.get('updated_at') else ''
+                
                 mailings_data.append({
                     'ID': mailing['id'],
                     'Title': mailing['title'],
                     'Type': mailing['message_type'],
                     'Status': mailing['status'],
-                    'Created': format_moscow_time(mailing['created_at'], '%Y-%m-%d %H:%M') if mailing['created_at'] else '',
-                    'Updated': format_moscow_time(mailing['updated_at'], '%Y-%m-%d %H:%M') if mailing['updated_at'] else '',
+                    'Created': created_at,
+                    'Updated': updated_at,
                     'Text Length': len(mailing['message_text'] or ''),
                     'Has Media': 'Да' if mailing['media_file_id'] else 'Нет',
                     'Total Sent': stats['total_sent'],
@@ -98,6 +114,9 @@ class ExcelExporter:
                 delivery_rate = (delivered/total_sent*100) if total_sent > 0 else 0
                 read_rate = (read_count/total_sent*100) if total_sent > 0 else 0
                 
+                # Безопасное форматирование времени
+                created_at = format_moscow_time(mailing.get('created_at'), '%Y-%m-%d') if mailing.get('created_at') else ''
+                
                 stats_data.append({
                     'Mailing ID': mailing['id'],
                     'Title': mailing['title'],
@@ -108,7 +127,7 @@ class ExcelExporter:
                     'Delivery Rate': f"{delivery_rate:.1f}%",
                     'Read Rate': f"{read_rate:.1f}%",
                     'Success Rate': f"{stats['success_rate']:.1f}%",
-                    'Created': format_moscow_time(mailing['created_at'], '%Y-%m-%d') if mailing['created_at'] else ''
+                    'Created': created_at
                 })
             
             if stats_data:
@@ -188,6 +207,7 @@ class ExcelExporter:
             self._auto_adjust_columns(writer.sheets['Общая статистика'])
         except Exception as e:
             print(f"Ошибка при экспорте детальной статистики: {e}")
+
     def _export_user_activity(self, writer):
         """Экспорт активности пользователей с московским временем"""
         try:
@@ -199,8 +219,21 @@ class ExcelExporter:
                 user_joined = utc_to_moscow(user.joined_at) if user.joined_at else None
                 user_last_activity = utc_to_moscow(user.last_activity) if user.last_activity else None
                 
-                days_since_join = (current_time - user_joined).days if user_joined else 0
-                days_since_activity = (current_time - user_last_activity).days if user_last_activity else 999
+                # Безопасный расчет дней
+                days_since_join = 0
+                days_since_activity = 999
+                
+                if user_joined:
+                    try:
+                        days_since_join = (current_time - user_joined).days
+                    except:
+                        days_since_join = 0
+                
+                if user_last_activity:
+                    try:
+                        days_since_activity = (current_time - user_last_activity).days
+                    except:
+                        days_since_activity = 999
                 
                 activity_data.append({
                     'User ID': user.user_id,

@@ -67,17 +67,17 @@ class Database:
         except Exception as e:
             logger.error(f"Error creating tables: {e}", exc_info=True)
 
-    def _get_moscow_time(self):
-        """Локальный импорт для избежания циклических импортов"""
+    def _get_moscow_time_functions(self):
+        """Локальный импорт для избежания циклических импортов - возвращает функции, а не их результат"""
         from utils.timezone import get_moscow_time, utc_to_moscow, moscow_to_utc
-        return get_moscow_time(), utc_to_moscow, moscow_to_utc
+        return get_moscow_time, utc_to_moscow, moscow_to_utc
 
     def _get_mailing_dict(self, mailing):
         """Преобразует объект Mailing в словарь с московским временем"""
         if not mailing:
             return None
             
-        _, utc_to_moscow, _ = self._get_moscow_time()
+        _, utc_to_moscow, _ = self._get_moscow_time_functions()
             
         mailing_dict = {
             'id': mailing.id,
@@ -134,7 +134,7 @@ class Database:
 
     def get_active_users_today(self):
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
             today_moscow = get_moscow_time().date()
             
             # Создаем datetime объекты в московском времени
@@ -158,7 +158,7 @@ class Database:
 
     def get_new_users(self, days: int = 7):
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
             since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
             users = self.session.query(User).filter(
                 User.joined_at >= since_date
@@ -179,7 +179,7 @@ class Database:
 
     def get_active_users_count_today(self):
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
             today_moscow = get_moscow_time().date()
             today_start_naive = datetime.combine(today_moscow, datetime.min.time())
             today_end_naive = datetime.combine(today_moscow, datetime.max.time())
@@ -199,7 +199,7 @@ class Database:
 
     def get_active_users_count_week(self):
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
             week_ago = moscow_to_utc(get_moscow_time() - timedelta(days=7))
             count = self.session.query(User).filter(
                 User.is_active == True,
@@ -212,7 +212,7 @@ class Database:
 
     def get_new_users_count(self, days: int = 1):
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
+            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
             since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
             count = self.session.query(User).filter(
                 User.joined_at >= since_date
@@ -222,6 +222,7 @@ class Database:
             logger.error(f"Error counting new users for {days} days: {e}", exc_info=True)
             return 0
 
+    # Добавленные методы
     def get_new_users_count_week(self):
         """Количество новых пользователей за неделю"""
         return self.get_new_users_count(days=7)

@@ -9,10 +9,13 @@ from utils.helpers import (
     get_mailings_keyboard,
     get_users_keyboard,
     get_target_groups_keyboard,
-    get_back_keyboard
+    get_back_keyboard,
+    get_logs_keyboard
 )
 import config
 import os
+from services.logger import logger
+from datetime import datetime, timedelta
 
 router = Router()
 
@@ -333,7 +336,8 @@ async def select_mailing_target(callback: CallbackQuery):
         
         users_count = db.get_user_count()
         active_today = db.get_active_users_count_today()
-        new_users = db.get_new_users_count(days=7)
+        new_week = db.get_new_users_count_week()
+        new_month = db.get_new_users_count_month()
         
         await callback.message.edit_text(
             f"🎯 <b>Выбор целевой группы</b>\n\n"
@@ -341,7 +345,8 @@ async def select_mailing_target(callback: CallbackQuery):
             f"👥 Доступные группы:\n"
             f"   • Все пользователи: {users_count} чел.\n"
             f"   • Активные сегодня: {active_today} чел.\n"
-            f"   • Новые пользователи (7 дней): {new_users} чел.",
+            f"   • Новые пользователи (7 дней): {new_week} чел.\n"
+            f"   • Новые пользователи (30 дней): {new_month} чел.",
             reply_markup=get_target_groups_keyboard(mailing_id),
             parse_mode="HTML"
         )
@@ -360,13 +365,14 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
     
     try:
         from services.database import db
+        from utils.helpers import get_target_group_name
         
         data_parts = callback.data.split("_")
         if len(data_parts) < 3:
             await callback.answer("❌ Ошибка в данных")
             return
             
-        target_group = data_parts[1]  # all, active или new
+        target_group = data_parts[1]  # all, active, new_week, new_month
         mailing_id = int(data_parts[2])
         
         mailing = db.get_mailing(mailing_id)
@@ -404,15 +410,6 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
             f"❌ Ошибка при запуске рассылки: {e}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
-
-def get_target_group_name(target_group: str) -> str:
-    """Получить читаемое название целевой группы"""
-    names = {
-        "all": "Все пользователи",
-        "active": "Активные сегодня", 
-        "new": "Новые пользователи"
-    }
-    return names.get(target_group, "Неизвестная группа")
 
 # 👥 РАЗДЕЛ ПОЛЬЗОВАТЕЛЕЙ
 @router.callback_query(F.data == "admin_users")
@@ -522,7 +519,8 @@ async def users_analytics(callback: CallbackQuery):
         active_today = db.get_active_users_count_today()
         active_week = db.get_active_users_count_week()
         new_today = db.get_new_users_count(days=1)
-        new_week = db.get_new_users_count(days=7)
+        new_week = db.get_new_users_count_week()
+        new_month = db.get_new_users_count_month()
         
         today_rate = (active_today / total_users * 100) if total_users > 0 else 0
         week_rate = (active_week / total_users * 100) if total_users > 0 else 0
@@ -536,6 +534,7 @@ async def users_analytics(callback: CallbackQuery):
    • Активных за неделю: {active_week}
    • Новых сегодня: {new_today}
    • Новых за неделю: {new_week}
+   • Новых за месяц: {new_month}
 
 📈 <b>Процент активности:</b>
    • За сегодня: {today_rate:.1f}%
@@ -543,6 +542,7 @@ async def users_analytics(callback: CallbackQuery):
 
 📅 <b>Тенденции:</b>
    • Рост за неделю: +{new_week} пользователей
+   • Рост за месяц: +{new_month} пользователей
 """
         
         await callback.message.edit_text(
@@ -725,4 +725,193 @@ async def delete_mailing(callback: CallbackQuery):
         await callback.message.edit_text(
             f"❌ Ошибка при удалении рассылки: {e}",
             reply_markup=get_back_keyboard("admin_mailings")
+        )
+
+# Обработка кнопки отправки конкретной рассылки
+@router.callback_query(F.data.startswith("send_mailing_"))
+async def send_specific_mailing(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.database import db
+        
+        mailing_id = int(callback.data.replace("send_mailing_", ""))
+        mailing = db.get_mailing(mailing_id)
+        
+        if not mailing:
+            await callback.answer("❌ Рассылка не найдена")
+            return
+        
+        await callback.message.edit_text(
+            f"🎯 <b>Выбор целевой группы для рассылки</b>\n\n"
+            f"📨 Рассылка: <b>{mailing['title']}</b>\n\n"
+            "Выберите целевую группу:",
+            reply_markup=get_target_groups_keyboard(mailing_id),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await callback.message.edit_text(
+            f"❌ Ошибка при выборе рассылки: {e}",
+            reply_markup=get_back_keyboard("admin_mailings")
+        )
+# Добавляем новый обработчик для получения логов
+@router.callback_query(F.data == "get_logs")
+async def get_logs_menu(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        await callback.message.edit_text(
+            "📋 <b>Получение логов</b>\n\n"
+            "Выберите период для скачивания логов:",
+            reply_markup=get_logs_keyboard(),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error in get_logs_menu: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при загрузке меню логов: {e}",
+            reply_markup=get_back_keyboard("admin_stats")
+        )
+
+@router.callback_query(F.data == "logs_current")
+async def send_current_month_logs(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        await callback.message.edit_text("📋 Подготавливаю логи за текущий месяц...")
+        
+        current_month = datetime.now().strftime('%Y%m')
+        log_file_path = logger.get_log_file_path(current_month)
+        
+        if not os.path.exists(log_file_path):
+            await callback.message.edit_text(
+                "❌ Логи за текущий месяц не найдены",
+                reply_markup=get_back_keyboard("get_logs")
+            )
+            return
+        
+        # Отправляем файл лога
+        file = FSInputFile(log_file_path)
+        await bot.send_document(
+            chat_id=callback.from_user.id,
+            document=file,
+            caption=f"📋 <b>Логи бота за текущий месяц</b>\n\n"
+                   f"Файл: <code>bot_{current_month}.log</code>\n"
+                   f"Размер: {os.path.getsize(log_file_path) / 1024:.1f} КБ",
+            parse_mode="HTML"
+        )
+        
+        await callback.message.edit_text(
+            "✅ Логи за текущий месяц отправлены!",
+            reply_markup=get_back_keyboard("admin_stats")
+        )
+        
+        logger.log_admin_action(callback.from_user.id, "downloaded current month logs")
+        
+    except Exception as e:
+        logger.error(f"Error sending current month logs: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при отправке логов: {e}",
+            reply_markup=get_back_keyboard("get_logs")
+        )
+
+@router.callback_query(F.data == "logs_previous")
+async def send_previous_month_logs(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        await callback.message.edit_text("📋 Подготавливаю логи за предыдущий месяц...")
+        
+        # Получаем предыдущий месяц
+        first_day = datetime.now().replace(day=1)
+        previous_month = (first_day - timedelta(days=1)).strftime('%Y%m')
+        log_file_path = logger.get_log_file_path(previous_month)
+        
+        if not os.path.exists(log_file_path):
+            await callback.message.edit_text(
+                "❌ Логи за предыдущий месяц не найдены",
+                reply_markup=get_back_keyboard("get_logs")
+            )
+            return
+        
+        # Отправляем файл лога
+        file = FSInputFile(log_file_path)
+        await bot.send_document(
+            chat_id=callback.from_user.id,
+            document=file,
+            caption=f"📋 <b>Логи бота за предыдущий месяц</b>\n\n"
+                   f"Файл: <code>bot_{previous_month}.log</code>\n"
+                   f"Размер: {os.path.getsize(log_file_path) / 1024:.1f} КБ",
+            parse_mode="HTML"
+        )
+        
+        await callback.message.edit_text(
+            "✅ Логи за предыдущий месяц отправлены!",
+            reply_markup=get_back_keyboard("admin_stats")
+        )
+        
+        logger.log_admin_action(callback.from_user.id, "downloaded previous month logs")
+        
+    except Exception as e:
+        logger.error(f"Error sending previous month logs: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при отправке логов: {e}",
+            reply_markup=get_back_keyboard("get_logs")
+        )
+
+@router.callback_query(F.data == "logs_all")
+async def send_all_logs(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        await callback.message.edit_text("📋 Подготавливаю все доступные логи...")
+        
+        available_logs = logger.get_available_logs()
+        
+        if not available_logs:
+            await callback.message.edit_text(
+                "❌ Логи не найдены",
+                reply_markup=get_back_keyboard("get_logs")
+            )
+            return
+        
+        sent_count = 0
+        for log_info in available_logs:
+            try:
+                file = FSInputFile(log_info['path'])
+                await bot.send_document(
+                    chat_id=callback.from_user.id,
+                    document=file,
+                    caption=f"📋 <b>Лог бота</b>\n\n"
+                           f"Период: {log_info['date'].strftime('%B %Y')}\n"
+                           f"Файл: <code>{log_info['filename']}</code>\n"
+                           f"Размер: {os.path.getsize(log_info['path']) / 1024:.1f} КБ",
+                    parse_mode="HTML"
+                )
+                sent_count += 1
+            except Exception as e:
+                logger.error(f"Error sending log file {log_info['filename']}: {e}")
+        
+        await callback.message.edit_text(
+            f"✅ Отправлено {sent_count} файлов логов из {len(available_logs)}!",
+            reply_markup=get_back_keyboard("admin_stats")
+        )
+        
+        logger.log_admin_action(callback.from_user.id, f"downloaded all logs ({sent_count} files)")
+        
+    except Exception as e:
+        logger.error(f"Error sending all logs: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при отправке логов: {e}",
+            reply_markup=get_back_keyboard("get_logs")
         )

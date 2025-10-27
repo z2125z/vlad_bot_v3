@@ -12,12 +12,13 @@ def get_admin_main_keyboard():
     return keyboard.as_markup()
 
 def get_stats_keyboard():
-    """Меню статистики с кнопкой экспорта"""
+    """Меню статистики с кнопкой экспорта и логов"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="📈 Общая статистика", callback_data="stats_overview"))
     keyboard.add(InlineKeyboardButton(text="📊 Статистика рассылок", callback_data="stats_mailings"))
     keyboard.add(InlineKeyboardButton(text="👤 Статистика пользователей", callback_data="stats_users"))
     keyboard.add(InlineKeyboardButton(text="📁 Экспорт в Excel", callback_data="export_excel"))
+    keyboard.add(InlineKeyboardButton(text="📋 Получить логи", callback_data="get_logs"))
     keyboard.add(InlineKeyboardButton(text="🔙 Главное меню", callback_data="admin_main"))
     keyboard.adjust(1)
     return keyboard.as_markup()
@@ -83,10 +84,21 @@ def get_target_groups_keyboard(mailing_id: int):
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="👥 Все пользователи", callback_data=f"target_all_{mailing_id}"))
     keyboard.add(InlineKeyboardButton(text="📅 Активные сегодня", callback_data=f"target_active_{mailing_id}"))
-    keyboard.add(InlineKeyboardButton(text="🆕 Новые пользователи", callback_data=f"target_new_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="🆕 Новые пользователи (7 дней)", callback_data=f"target_new_week_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="🆕 Новые пользователи (30 дней)", callback_data=f"target_new_month_{mailing_id}"))
     keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="mailings_send"))
     keyboard.adjust(1)
     return keyboard.as_markup()
+
+def get_target_group_name(target_group: str) -> str:
+    """Получить читаемое название целевой группы"""
+    names = {
+        "all": "Все пользователи",
+        "active": "Активные сегодня", 
+        "new_week": "Новые пользователи (7 дней)",
+        "new_month": "Новые пользователи (30 дней)"
+    }
+    return names.get(target_group, "Неизвестная группа")
 
 def get_back_keyboard(target: str = "admin_main"):
     """Универсальная кнопка назад"""
@@ -217,10 +229,20 @@ def format_mailings_stats():
     except Exception as e:
         return f"❌ Ошибка при загрузке статистики рассылок: {e}"
 
+def get_logs_keyboard():
+    """Клавиатура для выбора логов"""
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(InlineKeyboardButton(text="📋 Текущий месяц", callback_data="logs_current"))
+    keyboard.add(InlineKeyboardButton(text="📋 Предыдущий месяц", callback_data="logs_previous"))
+    keyboard.add(InlineKeyboardButton(text="📋 Все логи", callback_data="logs_all"))
+    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+    keyboard.adjust(1)
+    return keyboard.as_markup()
+
 def format_mailing_preview(mailing):
     """Форматирование превью рассылки с московским временем"""
     try:
-        from services.database import db  # Локальный импорт
+        from services.database import db
         
         type_emojis = {
             'text': '📝',
@@ -242,8 +264,9 @@ def format_mailing_preview(mailing):
         message_text = mailing['message_text']
         preview_text = message_text[:200] + '...' if len(message_text) > 200 else message_text
         
-        created_at = format_moscow_time(mailing['created_at']) if mailing['created_at'] else 'неизвестно'
-        updated_at = format_moscow_time(mailing['updated_at']) if mailing['updated_at'] else 'неизвестно'
+        # ИСПРАВЛЕНИЕ: проверяем на None перед вызовом strftime
+        created_at = format_moscow_time(mailing['created_at']) if mailing.get('created_at') else 'неизвестно'
+        updated_at = format_moscow_time(mailing['updated_at']) if mailing.get('updated_at') else 'неизвестно'
         
         return f"""
 {type_emojis.get(mailing['message_type'], '📝')} <b>Просмотр рассылки</b>

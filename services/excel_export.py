@@ -121,12 +121,15 @@ class ExcelExporter:
     def _export_detailed_stats(self, writer):
         """Экспорт детальной статистики с московским временем"""
         try:
+            from services.database import db
+            
             # Общая статистика
             total_users = db.get_user_count()
             active_today = db.get_active_users_count_today()
             active_week = db.get_active_users_count_week()
             new_today = db.get_new_users_count(days=1)
-            new_week = db.get_new_users_count(days=7)
+            new_week = db.get_new_users_count_week()
+            new_month = db.get_new_users_count_month()
             
             # Статистика по рассылкам
             all_mailings = db.get_all_mailings()
@@ -155,6 +158,10 @@ class ExcelExporter:
                 'Value': new_week,
                 'Description': 'Новых за неделю'
             }, {
+                'Metric': 'New Month',
+                'Value': new_month,
+                'Description': 'Новых за месяц'
+            }, {
                 'Metric': 'Total Mailings',
                 'Value': len(all_mailings),
                 'Description': 'Всего рассылок'
@@ -181,7 +188,6 @@ class ExcelExporter:
             self._auto_adjust_columns(writer.sheets['Общая статистика'])
         except Exception as e:
             print(f"Ошибка при экспорте детальной статистики: {e}")
-
     def _export_user_activity(self, writer):
         """Экспорт активности пользователей с московским временем"""
         try:

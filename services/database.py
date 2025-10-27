@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import config
 import json
 import pytz
+from services.logger import logger
 
 Base = declarative_base()
 
@@ -56,14 +57,15 @@ class Database:
         self._create_tables()
         Session = scoped_session(sessionmaker(bind=self.engine))
         self.session = Session()
+        logger.info("Database initialized")
 
     def _create_tables(self):
         """Создание таблиц если они не существуют"""
         try:
             Base.metadata.create_all(self.engine)
-            print("Таблицы созданы/проверены")
+            logger.info("Tables created/verified")
         except Exception as e:
-            print(f"Ошибка при создании таблиц: {e}")
+            logger.error(f"Error creating tables: {e}", exc_info=True)
 
     def _get_moscow_time(self):
         """Локальный импорт для избежания циклических импортов"""
@@ -105,9 +107,10 @@ class Database:
                 user = User(user_id=user_id, username=username, full_name=full_name)
                 self.session.add(user)
                 self.session.commit()
+                logger.info(f"New user added: {user_id} (@{username})")
             return user
         except Exception as e:
-            print(f"Ошибка при добавлении пользователя: {e}")
+            logger.error(f"Error adding user {user_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
 
@@ -117,50 +120,55 @@ class Database:
             if user:
                 user.last_activity = datetime.utcnow()
                 self.session.commit()
+                logger.debug(f"User activity updated: {user_id}")
         except Exception as e:
-            print(f"Ошибка при обновлении активности: {e}")
+            logger.error(f"Error updating user activity {user_id}: {e}", exc_info=True)
             self.session.rollback()
 
     def get_all_users(self):
         try:
             return self.session.query(User).filter_by(is_active=True).all()
         except Exception as e:
-            print(f"Ошибка при получении пользователей: {e}")
+            logger.error(f"Error getting all users: {e}", exc_info=True)
             return []
 
     def get_active_users_today(self):
         try:
-            # Используем локальный импорт
             get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
             today_moscow = get_moscow_time().date()
             today_start = moscow_to_utc(datetime.combine(today_moscow, datetime.min.time()))
             today_end = moscow_to_utc(datetime.combine(today_moscow, datetime.max.time()))
             
-            return self.session.query(User).filter(
+            users = self.session.query(User).filter(
                 User.is_active == True,
                 User.last_activity >= today_start,
                 User.last_activity <= today_end
             ).all()
+            logger.debug(f"Found {len(users)} active users today")
+            return users
         except Exception as e:
-            print(f"Ошибка при получении активных пользователей: {e}")
+            logger.error(f"Error getting active users today: {e}", exc_info=True)
             return []
 
     def get_new_users(self, days: int = 7):
         try:
             get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
             since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
-            return self.session.query(User).filter(
+            users = self.session.query(User).filter(
                 User.joined_at >= since_date
             ).all()
+            logger.debug(f"Found {len(users)} new users in last {days} days")
+            return users
         except Exception as e:
-            print(f"Ошибка при получении новых пользователей: {e}")
+            logger.error(f"Error getting new users for {days} days: {e}", exc_info=True)
             return []
 
     def get_user_count(self):
         try:
-            return self.session.query(User).filter_by(is_active=True).count()
+            count = self.session.query(User).filter_by(is_active=True).count()
+            return count
         except Exception as e:
-            print(f"Ошибка при подсчете пользователей: {e}")
+            logger.error(f"Error counting users: {e}", exc_info=True)
             return 0
 
     def get_active_users_count_today(self):
@@ -170,36 +178,39 @@ class Database:
             today_start = moscow_to_utc(datetime.combine(today_moscow, datetime.min.time()))
             today_end = moscow_to_utc(datetime.combine(today_moscow, datetime.max.time()))
             
-            return self.session.query(User).filter(
+            count = self.session.query(User).filter(
                 User.is_active == True,
                 User.last_activity >= today_start,
                 User.last_activity <= today_end
             ).count()
+            return count
         except Exception as e:
-            print(f"Ошибка при подсчете активных пользователей: {e}")
+            logger.error(f"Error counting active users today: {e}", exc_info=True)
             return 0
 
     def get_active_users_count_week(self):
         try:
             get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
             week_ago = moscow_to_utc(get_moscow_time() - timedelta(days=7))
-            return self.session.query(User).filter(
+            count = self.session.query(User).filter(
                 User.is_active == True,
                 User.last_activity >= week_ago
             ).count()
+            return count
         except Exception as e:
-            print(f"Ошибка при подсчете активных за неделю: {e}")
+            logger.error(f"Error counting active users for week: {e}", exc_info=True)
             return 0
 
     def get_new_users_count(self, days: int = 1):
         try:
             get_moscow_time, _, moscow_to_utc = self._get_moscow_time()
             since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
-            return self.session.query(User).filter(
+            count = self.session.query(User).filter(
                 User.joined_at >= since_date
             ).count()
+            return count
         except Exception as e:
-            print(f"Ошибка при подсчете новых пользователей: {e}")
+            logger.error(f"Error counting new users for {days} days: {e}", exc_info=True)
             return 0
 
     def create_mailing(self, title: str, message_text: str, message_type: str = "text", 
@@ -217,9 +228,10 @@ class Database:
             )
             self.session.add(mailing)
             self.session.commit()
+            logger.info(f"New mailing created: '{title}' (ID: {mailing.id})")
             return self._get_mailing_dict(mailing)
         except Exception as e:
-            print(f"Ошибка при создании рассылки: {e}")
+            logger.error(f"Error creating mailing '{title}': {e}", exc_info=True)
             self.session.rollback()
             return None
 
@@ -233,10 +245,11 @@ class Database:
                     setattr(mailing, key, value)
                 mailing.updated_at = datetime.utcnow()
                 self.session.commit()
+                logger.info(f"Mailing {mailing_id} updated: {list(kwargs.keys())}")
                 return self._get_mailing_dict(mailing)
             return None
         except Exception as e:
-            print(f"Ошибка при обновлении рассылки: {e}")
+            logger.error(f"Error updating mailing {mailing_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
 
@@ -245,26 +258,30 @@ class Database:
             mailing = self.session.query(Mailing).filter_by(id=mailing_id).first()
             return self._get_mailing_dict(mailing)
         except Exception as e:
-            print(f"Ошибка при получении рассылки: {e}")
+            logger.error(f"Error getting mailing {mailing_id}: {e}", exc_info=True)
             return None
 
     def get_mailings_by_status(self, status: str):
         try:
             mailings = self.session.query(Mailing).filter_by(status=status).all()
-            return [self._get_mailing_dict(mailing) for mailing in mailings]
+            result = [self._get_mailing_dict(mailing) for mailing in mailings]
+            logger.debug(f"Found {len(result)} mailings with status '{status}'")
+            return result
         except Exception as e:
-            print(f"Ошибка при получении рассылок по статусу: {e}")
+            logger.error(f"Error getting mailings by status '{status}': {e}", exc_info=True)
             return []
 
     def get_all_mailings(self):
         try:
             mailings = self.session.query(Mailing).filter(Mailing.status != 'deleted').all()
-            return [self._get_mailing_dict(mailing) for mailing in mailings]
+            result = [self._get_mailing_dict(mailing) for mailing in mailings]
+            return result
         except Exception as e:
-            print(f"Ошибка при получении всех рассылок: {e}")
+            logger.error(f"Error getting all mailings: {e}", exc_info=True)
             return []
 
     def change_mailing_status(self, mailing_id: int, status: str):
+        logger.info(f"Changing mailing {mailing_id} status to '{status}'")
         return self.update_mailing(mailing_id, status=status)
 
     def get_mailing_stats(self, mailing_id: int):
@@ -281,7 +298,7 @@ class Database:
                 'success_rate': (delivered / total_sent * 100) if total_sent > 0 else 0
             }
         except Exception as e:
-            print(f"Ошибка при получении статистики рассылки: {e}")
+            logger.error(f"Error getting mailing stats for {mailing_id}: {e}", exc_info=True)
             return {'total_sent': 0, 'delivered': 0, 'read': 0, 'success_rate': 0}
 
     def add_mailing_stats(self, mailing_id: int, user_id: int, target_group: str):
@@ -296,7 +313,7 @@ class Database:
             self.session.commit()
             return stats
         except Exception as e:
-            print(f"Ошибка при добавлении статистики: {e}")
+            logger.error(f"Error adding mailing stats for mailing {mailing_id}, user {user_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
 
@@ -313,7 +330,7 @@ class Database:
                 self.session.commit()
             return stats
         except Exception as e:
-            print(f"Ошибка при обновлении статистики: {e}")
+            logger.error(f"Error updating mailing stats {stats_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
 

@@ -20,6 +20,17 @@ class User(Base):
     joined_at = Column(DateTime, default=datetime.utcnow)
     last_activity = Column(DateTime, default=datetime.utcnow)
 
+class WelcomeMessage(Base):
+    __tablename__ = 'welcome_messages'
+    
+    id = Column(Integer, primary_key=True)
+    message_text = Column(Text)
+    message_type = Column(String(50), default='text')
+    media_file_id = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class Mailing(Base):
     __tablename__ = 'mailings'
     
@@ -32,6 +43,8 @@ class Mailing(Base):
     buttons = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    trigger_word = Column(String(100), nullable=True)
+    is_trigger_mailing = Column(Boolean, default=False)
 
 class MailingStats(Base):
     __tablename__ = 'mailing_stats'
@@ -86,6 +99,8 @@ class Database:
             'message_type': mailing.message_type,
             'media_file_id': mailing.media_file_id,
             'status': mailing.status,
+            'trigger_word': mailing.trigger_word,
+            'is_trigger_mailing': mailing.is_trigger_mailing,
             'created_at': utc_to_moscow(mailing.created_at) if mailing.created_at else None,
             'updated_at': utc_to_moscow(mailing.updated_at) if mailing.updated_at else None
         }
@@ -99,6 +114,83 @@ class Database:
             mailing_dict['buttons'] = []
             
         return mailing_dict
+
+    # МЕТОДЫ ДЛЯ ПРИВЕТСТВЕННЫХ СООБЩЕНИЙ
+    def get_welcome_message(self):
+        """Получить активное приветственное сообщение"""
+        try:
+            welcome = self.session.query(WelcomeMessage).filter_by(is_active=True).first()
+            if welcome:
+                _, utc_to_moscow, _ = self._get_moscow_time_functions()
+                return {
+                    'id': welcome.id,
+                    'message_text': welcome.message_text,
+                    'message_type': welcome.message_type,
+                    'media_file_id': welcome.media_file_id,
+                    'is_active': welcome.is_active,
+                    'created_at': utc_to_moscow(welcome.created_at) if welcome.created_at else None,
+                    'updated_at': utc_to_moscow(welcome.updated_at) if welcome.updated_at else None
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Error getting welcome message: {e}", exc_info=True)
+            return None
+
+    def update_welcome_message(self, message_text: str, message_type: str = "text", media_file_id: str = None):
+        """Обновить приветственное сообщение"""
+        try:
+            # Деактивируем все существующие
+            self.session.query(WelcomeMessage).update({'is_active': False})
+            
+            # Создаем новое
+            welcome = WelcomeMessage(
+                message_text=message_text,
+                message_type=message_type,
+                media_file_id=media_file_id,
+                is_active=True
+            )
+            self.session.add(welcome)
+            self.session.commit()
+            logger.info("Welcome message updated")
+            return True
+        except Exception as e:
+            logger.error(f"Error updating welcome message: {e}", exc_info=True)
+            self.session.rollback()
+            return False
+
+    # МЕТОДЫ ДЛЯ РАССЫЛОК ПО ЗАПРОСУ
+    def get_active_trigger_mailings(self):
+        """Получить все активные рассылки по запросу"""
+        try:
+            mailings = self.session.query(Mailing).filter(
+                Mailing.is_trigger_mailing == True,
+                Mailing.status == 'active'
+            ).all()
+            return [self._get_mailing_dict(mailing) for mailing in mailings]
+        except Exception as e:
+            logger.error(f"Error getting active trigger mailings: {e}", exc_info=True)
+            return []
+
+    def get_mailing_by_trigger_word(self, trigger_word: str):
+        """Найти рассылку по кодовому слову"""
+        try:
+            mailing = self.session.query(Mailing).filter(
+                Mailing.trigger_word == trigger_word,
+                Mailing.is_trigger_mailing == True,
+                Mailing.status == 'active'
+            ).first()
+            return self._get_mailing_dict(mailing)
+        except Exception as e:
+            logger.error(f"Error getting mailing by trigger word '{trigger_word}': {e}", exc_info=True)
+            return None
+
+    def get_user(self, user_id: int):
+        """Получить пользователя по ID"""
+        try:
+            return self.session.query(User).filter_by(user_id=user_id).first()
+        except Exception as e:
+            logger.error(f"Error getting user {user_id}: {e}")
+            return None
 
     def add_user(self, user_id: int, username: str, full_name: str):
         try:

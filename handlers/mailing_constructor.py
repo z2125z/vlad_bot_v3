@@ -3,7 +3,7 @@ from aiogram.types import Message, CallbackQuery, ContentType
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from services.database import db
-from utils.helpers import get_mailing_type_keyboard, get_back_keyboard, format_mailing_preview, get_mailing_preview_keyboard, get_mailing_actions_keyboard
+from utils.helpers import get_mailing_type_keyboard, get_back_keyboard, format_mailing_preview, get_mailing_preview_keyboard, get_mailing_actions_keyboard, get_skip_trigger_keyboard
 import config
 
 router = Router()
@@ -16,6 +16,8 @@ class MailingConstructor(StatesGroup):
     editing_title = State()
     editing_text = State()
     editing_media = State()
+    waiting_for_trigger_word = State()
+    editing_trigger_word = State()
 
 # Начало создания рассылки
 @router.callback_query(F.data == "create_mailing")
@@ -148,24 +150,71 @@ async def mailing_finalize(update, state: FSMContext):
         return
     
     await state.update_data(mailing_id=mailing['id'])
+    
+    # Спрашиваем про кодовое слово
+    await state.set_state(MailingConstructor.waiting_for_trigger_word)
+    
+    if update.__class__.__name__ == "CallbackQuery":
+        message = update.message
+    else:
+        message = update
+        
+    await message.answer(
+        "🔤 <b>Настройка рассылки по запросу</b>\n\n"
+        "Хотите сделать эту рассылку доступной по кодовому слову?\n\n"
+        "Отправьте кодовое слово (например: <code>прайс</code>, <code>услуги</code>) или нажмите 'Пропустить':",
+        parse_mode="HTML",
+        reply_markup=get_skip_trigger_keyboard()
+    )
+
+# Обработка кодового слова
+@router.message(MailingConstructor.waiting_for_trigger_word)
+async def mailing_get_trigger_word(message: Message, state: FSMContext):
+    trigger_word = message.text.strip().lower()
+    
+    if len(trigger_word) > 50:
+        await message.answer("❌ Слишком длинное кодовое слово. Максимум 50 символов.")
+        return
+    
+    data = await state.get_data()
+    mailing_id = data['mailing_id']
+    
+    # Обновляем рассылку
+    db.update_mailing(mailing_id, 
+                     trigger_word=trigger_word, 
+                     is_trigger_mailing=True)
+    
+    await mailing_show_preview(message, state)
+
+# Пропуск кодового слова
+@router.callback_query(MailingConstructor.waiting_for_trigger_word, F.data == "skip_trigger")
+async def mailing_skip_trigger_word(callback: CallbackQuery, state: FSMContext):
+    await mailing_show_preview(callback, state)
+    await callback.answer()
+
+# Функция показа превью (вынесена для переиспользования)
+async def mailing_show_preview(update, state: FSMContext):
+    data = await state.get_data()
+    mailing_id = data['mailing_id']
+    
     await state.set_state(MailingConstructor.waiting_for_confirmation)
     
+    mailing = db.get_mailing(mailing_id)
     preview_text = format_mailing_preview(mailing)
     
-    # Отправляем превью как текстовое сообщение, чтобы избежать ошибок редактирования
     if update.__class__.__name__ == "CallbackQuery":
         message = update.message
         await message.answer(
             preview_text,
             parse_mode="HTML",
-            reply_markup=get_mailing_preview_keyboard(mailing['id'])
+            reply_markup=get_mailing_preview_keyboard(mailing_id)
         )
     else:
         message = update
         await message.answer(
             preview_text,
             parse_mode="HTML",
-            reply_markup=get_mailing_preview_keyboard(mailing['id'])
+            reply_markup=get_mailing_preview_keyboard(mailing_id)
         )
 
 # Сохранение как черновика
@@ -389,6 +438,56 @@ async def edit_mailing_finalize(update, state: FSMContext):
     mailing_id = data.get('editing_mailing_id')
     
     mailing = db.get_mailing(mailing_id)
+    
+    # Спрашиваем про обновление кодового слова
+    await state.set_state(MailingConstructor.editing_trigger_word)
+    
+    current_word = mailing.get('trigger_word', 'Не установлено')
+    
+    if update.__class__.__name__ == "CallbackQuery":
+        message = update.message
+    else:
+        message = update
+        
+    await message.answer(
+        f"🔤 <b>Обновление кодового слова</b>\n\n"
+        f"Текущее кодовое слово: <code>{current_word}</code>\n\n"
+        "Отправьте новое кодовое слово или нажмите 'Пропустить':",
+        parse_mode="HTML",
+        reply_markup=get_skip_trigger_keyboard()
+    )
+
+# Обработка нового кодового слова при редактировании
+@router.message(MailingConstructor.editing_trigger_word)
+async def edit_mailing_trigger_word(message: Message, state: FSMContext):
+    trigger_word = message.text.strip().lower()
+    
+    if len(trigger_word) > 50:
+        await message.answer("❌ Слишком длинное кодовое слово. Максимум 50 символов.")
+        return
+    
+    data = await state.get_data()
+    mailing_id = data.get('editing_mailing_id')
+    
+    # Обновляем рассылку
+    db.update_mailing(mailing_id, 
+                     trigger_word=trigger_word, 
+                     is_trigger_mailing=bool(trigger_word))
+    
+    await edit_mailing_show_final(message, state)
+
+# Пропуск при редактировании
+@router.callback_query(MailingConstructor.editing_trigger_word, F.data == "skip_trigger")
+async def edit_mailing_skip_trigger_word(callback: CallbackQuery, state: FSMContext):
+    await edit_mailing_show_final(callback, state)
+    await callback.answer()
+
+# Финальный показ после редактирования
+async def edit_mailing_show_final(update, state: FSMContext):
+    data = await state.get_data()
+    mailing_id = data.get('editing_mailing_id')
+    
+    mailing = db.get_mailing(mailing_id)
     preview_text = format_mailing_preview(mailing)
     
     if update.__class__.__name__ == "CallbackQuery":
@@ -444,7 +543,7 @@ async def exit_constructor(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
 
-    # Пропуск редактирования медиа
+# Пропуск редактирования медиа
 @router.callback_query(F.data.startswith("skip_edit_"))
 async def skip_edit_media(callback: CallbackQuery, state: FSMContext):
     mailing_id = int(callback.data.replace("skip_edit_", ""))

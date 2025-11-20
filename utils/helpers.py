@@ -8,6 +8,7 @@ def get_admin_main_keyboard():
     keyboard.add(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
     keyboard.add(InlineKeyboardButton(text="📨 Рассылки", callback_data="admin_mailings"))
     keyboard.add(InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"))
+    keyboard.add(InlineKeyboardButton(text="👋 Приветственное сообщение", callback_data="edit_welcome"))
     keyboard.adjust(1)
     return keyboard.as_markup()
 
@@ -136,6 +137,12 @@ def get_skip_edit_keyboard(mailing_id: int):
     keyboard.adjust(1)
     return keyboard.as_markup()
 
+def get_skip_trigger_keyboard():
+    """Клавиатура для пропуска кодового слова"""
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(InlineKeyboardButton(text="⏭️ Пропустить", callback_data="skip_trigger"))
+    return keyboard.as_markup()
+
 def get_logs_keyboard():
     """Клавиатура для выбора логов"""
     keyboard = InlineKeyboardBuilder()
@@ -149,12 +156,21 @@ def get_logs_keyboard():
 def format_stats_overview():
     """Форматирование общей статистики с московским временем"""
     try:
-        from services.database import db  # Локальный импорт для избежания циклических импортов
+        from services.database import db
         
         users_count = db.get_user_count()
         active_today = db.get_active_users_count_today()
         all_mailings = len(db.get_all_mailings())
         active_mailings = len(db.get_mailings_by_status('active'))
+        trigger_mailings = db.get_active_trigger_mailings()
+        
+        # Статистика по триггерным рассылкам
+        trigger_stats = []
+        for mailing in trigger_mailings:
+            stats = db.get_mailing_stats(mailing['id'])
+            trigger_stats.append(f"   • {mailing['trigger_word']}: {stats['delivered']} отправок")
+        
+        trigger_info = "\n".join(trigger_stats) if trigger_stats else "   • Нет активных рассылок"
         
         return f"""
 📊 <b>Общая статистика</b>
@@ -167,6 +183,10 @@ def format_stats_overview():
 📨 <b>Рассылки:</b>
    • Всего: <b>{all_mailings}</b>
    • Активных: <b>{active_mailings}</b>
+   • По кодовым словам: <b>{len(trigger_mailings)}</b>
+
+🔤 <b>Статистика кодовых слов:</b>
+{trigger_info}
 
 ⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
@@ -176,7 +196,7 @@ def format_stats_overview():
 def format_users_stats():
     """Форматирование статистики пользователей"""
     try:
-        from services.database import db  # Локальный импорт
+        from services.database import db
         
         users_count = db.get_user_count()
         active_today = db.get_active_users_count_today()
@@ -209,12 +229,13 @@ def format_users_stats():
 def format_mailings_stats():
     """Форматирование статистики рассылок с московским временем"""
     try:
-        from services.database import db  # Локальный импорт
+        from services.database import db
         
         all_mailings = db.get_all_mailings()
         active_mailings = db.get_mailings_by_status('active')
         draft_mailings = db.get_mailings_by_status('draft')
         archived_mailings = db.get_mailings_by_status('archived')
+        trigger_mailings = db.get_active_trigger_mailings()
         
         total_sent = 0
         total_delivered = 0
@@ -237,6 +258,7 @@ def format_mailings_stats():
    • Активных: <b>{len(active_mailings)}</b>
    • Черновиков: <b>{len(draft_mailings)}</b>
    • В архиве: <b>{len(archived_mailings)}</b>
+   • По запросу: <b>{len(trigger_mailings)}</b>
 
 📊 <b>Эффективность:</b>
    • Всего отправлено: <b>{total_sent}</b>
@@ -279,10 +301,16 @@ def format_mailing_preview(mailing):
         created_at = format_moscow_time(mailing.get('created_at')) if mailing.get('created_at') else 'неизвестно'
         updated_at = format_moscow_time(mailing.get('updated_at')) if mailing.get('updated_at') else 'неизвестно'
         
+        # Информация о кодовом слове
+        trigger_info = ""
+        if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+            trigger_info = f"🔤 <b>Кодовое слово:</b> {mailing['trigger_word']}\n"
+        
         return f"""
 {type_emojis.get(mailing['message_type'], '📝')} <b>Просмотр рассылки</b>
 
 📋 <b>Название:</b> {mailing['title']}
+{trigger_info}
 📄 <b>Текст:</b> {preview_text}
 🎬 <b>Тип:</b> {mailing['message_type']}
 📊 <b>Статус:</b> {status_texts.get(mailing['status'], mailing['status'])}

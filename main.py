@@ -2,7 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from handlers import admin, user, mailing_constructor
+from handlers import admin, user, mailing_constructor, welcome_editor
 import config
 from services.logger import logger
 
@@ -19,6 +19,7 @@ async def main():
         # Регистрация роутеров
         dp.include_router(admin.router)
         dp.include_router(mailing_constructor.router)  
+        dp.include_router(welcome_editor.router)
         dp.include_router(user.router)
         
         logger.info("Bot started successfully")

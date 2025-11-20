@@ -138,6 +138,160 @@ class MailingService:
             db.update_mailing_stats(stats.id, sent=True, delivered=False)
             return False, None
 
+    async def send_mailing_to_user(self, mailing_data: dict, user_id: int):
+        """Отправка рассылки конкретному пользователю по данным"""
+        try:
+            keyboard = self._create_keyboard(mailing_data.get('buttons', []))
+            message = None
+            
+            if mailing_data['message_type'] == "text":
+                message = await self.bot.send_message(
+                    chat_id=user_id,
+                    text=mailing_data['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing_data['message_type'] == "photo":
+                message = await self.bot.send_photo(
+                    chat_id=user_id,
+                    photo=mailing_data['media_file_id'],
+                    caption=mailing_data['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing_data['message_type'] == "video":
+                message = await self.bot.send_video(
+                    chat_id=user_id,
+                    video=mailing_data['media_file_id'],
+                    caption=mailing_data['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing_data['message_type'] == "document":
+                message = await self.bot.send_document(
+                    chat_id=user_id,
+                    document=mailing_data['media_file_id'],
+                    caption=mailing_data['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing_data['message_type'] == "voice":
+                message = await self.bot.send_voice(
+                    chat_id=user_id,
+                    voice=mailing_data['media_file_id'],
+                    caption=mailing_data['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing_data['message_type'] == "video_note":
+                message = await self.bot.send_video_note(
+                    chat_id=user_id,
+                    video_note=mailing_data['media_file_id']
+                )
+                if mailing_data['message_text']:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text=mailing_data['message_text'],
+                        parse_mode="HTML",
+                        reply_markup=keyboard
+                    )
+            
+            if message:
+                return True, message.message_id
+            return False, None
+            
+        except Exception as e:
+            logger.error(f"Error sending mailing to user {user_id}: {e}")
+            return False, None
+
+    async def send_trigger_mailing(self, user_id: int, trigger_word: str):
+        """Отправка рассылки по кодовому слову"""
+        from services.database import db
+        from utils.timezone import get_moscow_time, moscow_to_utc
+        
+        mailing = db.get_mailing_by_trigger_word(trigger_word)
+        if not mailing:
+            return False, None
+
+        # Создаем запись статистики
+        stats = db.add_mailing_stats(mailing['id'], user_id, "trigger")
+        if not stats:
+            return False, None
+
+        keyboard = self._create_keyboard(mailing['buttons'])
+
+        try:
+            message = None
+            
+            if mailing['message_type'] == "text":
+                message = await self.bot.send_message(
+                    chat_id=user_id,
+                    text=mailing['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing['message_type'] == "photo":
+                message = await self.bot.send_photo(
+                    chat_id=user_id,
+                    photo=mailing['media_file_id'],
+                    caption=mailing['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing['message_type'] == "video":
+                message = await self.bot.send_video(
+                    chat_id=user_id,
+                    video=mailing['media_file_id'],
+                    caption=mailing['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing['message_type'] == "document":
+                message = await self.bot.send_document(
+                    chat_id=user_id,
+                    document=mailing['media_file_id'],
+                    caption=mailing['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing['message_type'] == "voice":
+                message = await self.bot.send_voice(
+                    chat_id=user_id,
+                    voice=mailing['media_file_id'],
+                    caption=mailing['message_text'],
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            elif mailing['message_type'] == "video_note":
+                message = await self.bot.send_video_note(
+                    chat_id=user_id,
+                    video_note=mailing['media_file_id']
+                )
+                if mailing['message_text']:
+                    await self.bot.send_message(
+                        chat_id=user_id,
+                        text=mailing['message_text'],
+                        parse_mode="HTML",
+                        reply_markup=keyboard
+                    )
+
+            # Обновляем статистику с московским временем
+            if message:
+                db.update_mailing_stats(stats.id, 
+                    sent=True, 
+                    delivered=True,
+                    delivered_at=moscow_to_utc(get_moscow_time())
+                )
+                db.update_user_activity(user_id)
+                return True, message.message_id
+            else:
+                db.update_mailing_stats(stats.id, sent=True, delivered=False)
+                return False, None
+            
+        except Exception as e:
+            db.update_mailing_stats(stats.id, sent=True, delivered=False)
+            return False, None
+
     async def broadcast_mailing(self, mailing_id: int, target_group: str = "all"):
         """Массовая рассылка по выбранной группе пользователей"""
         from services.database import db
@@ -160,6 +314,9 @@ class MailingService:
         elif target_group == "new_month":
             users = db.get_new_users_month()  # Новые за месяц
             target_name = "новые пользователи (30 дней)"
+        elif target_group == "trigger":
+            users = [db.get_user(user_id) for user_id in [callback.from_user.id]]  # Для триггерных рассылок
+            target_name = "по запросу пользователя"
         else:
             users = db.get_all_users()
             target_name = "все пользователи"
@@ -175,22 +332,23 @@ class MailingService:
         # Логируем начало рассылки
         logger.log_mailing_start(mailing_id, mailing['title'], target_group, total_count)
         
-        # Статус начала рассылки для админа
+        # Статус начала рассылки для админа (только для массовых рассылок)
         progress_message = None
-        try:
-            progress_message = await self.bot.send_message(
-                chat_id=config.ADMIN_IDS[0],  # Первому админу
-                text=f"🔄 <b>Начинаю рассылку</b>\n\n"
-                     f"📨 <b>Рассылка:</b> {mailing['title']}\n"
-                     f"🎯 <b>Целевая группа:</b> {target_name}\n"
-                     f"👥 <b>Получателей:</b> {total_count}\n"
-                     f"📊 <b>Прогресс:</b> 0/{total_count} (0%)\n"
-                     f"✅ <b>Успешно:</b> 0\n"
-                     f"❌ <b>Ошибки:</b> 0",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.error(f"Failed to send progress message: {e}")
+        if target_group != "trigger":
+            try:
+                progress_message = await self.bot.send_message(
+                    chat_id=config.ADMIN_IDS[0],  # Первому админу
+                    text=f"🔄 <b>Начинаю рассылку</b>\n\n"
+                         f"📨 <b>Рассылка:</b> {mailing['title']}\n"
+                         f"🎯 <b>Целевая группа:</b> {target_name}\n"
+                         f"👥 <b>Получателей:</b> {total_count}\n"
+                         f"📊 <b>Прогресс:</b> 0/{total_count} (0%)\n"
+                         f"✅ <b>Успешно:</b> 0\n"
+                         f"❌ <b>Ошибки:</b> 0",
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.error(f"Failed to send progress message: {e}")
 
         for index, user in enumerate(users):
             success, message_id = await self.send_mailing(
@@ -204,12 +362,12 @@ class MailingService:
             else:
                 errors.append(user.user_id)
             
-            # Логируем прогресс каждые 10 сообщений
-            if (index + 1) % 10 == 0:
+            # Логируем прогресс каждые 10 сообщений (только для массовых рассылок)
+            if target_group != "trigger" and (index + 1) % 10 == 0:
                 logger.log_mailing_progress(mailing_id, index + 1, total_count, success_count)
             
-            # Обновляем прогресс каждые 10 сообщений или каждые 10%
-            if (index + 1) % 10 == 0 or index == total_count - 1:
+            # Обновляем прогресс каждые 10 сообщений или каждые 10% (только для массовых рассылок)
+            if target_group != "trigger" and ((index + 1) % 10 == 0 or index == total_count - 1):
                 progress = (index + 1) / total_count * 100
                 error_count = len(errors)
                 
@@ -229,38 +387,40 @@ class MailingService:
                     logger.error(f"Error updating progress: {e}")
             
             # Задержка чтобы не превысить лимиты Telegram (30 сообщений в секунду)
-            await asyncio.sleep(0.05)  # 20 сообщений в секунду
+            if target_group != "trigger":
+                await asyncio.sleep(0.05)  # 20 сообщений в секунду
         
         # Логируем завершение рассылки
         logger.log_mailing_complete(mailing_id, success_count, total_count, len(errors))
         
-        # Финальный статус
-        success_rate = (success_count / total_count * 100) if total_count > 0 else 0
-        
-        final_message = (
-            f"✅ <b>Рассылка завершена!</b>\n\n"
-            f"📨 <b>Рассылка:</b> {mailing['title']}\n"
-            f"🎯 <b>Целевая группа:</b> {target_name}\n"
-            f"👥 <b>Всего получателей:</b> {total_count}\n"
-            f"✅ <b>Успешно отправлено:</b> {success_count}\n"
-            f"❌ <b>Ошибок:</b> {len(errors)}\n"
-            f"📊 <b>Эффективность:</b> {success_rate:.1f}%"
-        )
-        
-        if errors:
-            final_message += f"\n\n⚠️ <b>Не удалось отправить:</b> {len(errors)} пользователей"
-        
-        try:
-            if progress_message:
-                await progress_message.edit_text(final_message, parse_mode="HTML")
-            else:
-                # Если прогресс-сообщение не было создано, отправляем финальный результат
-                await self.bot.send_message(
-                    chat_id=config.ADMIN_IDS[0],
-                    text=final_message,
-                    parse_mode="HTML"
-                )
-        except Exception as e:
-            logger.error(f"Error sending final message: {e}")
+        # Финальный статус (только для массовых рассылок)
+        if target_group != "trigger":
+            success_rate = (success_count / total_count * 100) if total_count > 0 else 0
+            
+            final_message = (
+                f"✅ <b>Рассылка завершена!</b>\n\n"
+                f"📨 <b>Рассылка:</b> {mailing['title']}\n"
+                f"🎯 <b>Целевая группа:</b> {target_name}\n"
+                f"👥 <b>Всего получателей:</b> {total_count}\n"
+                f"✅ <b>Успешно отправлено:</b> {success_count}\n"
+                f"❌ <b>Ошибок:</b> {len(errors)}\n"
+                f"📊 <b>Эффективность:</b> {success_rate:.1f}%"
+            )
+            
+            if errors:
+                final_message += f"\n\n⚠️ <b>Не удалось отправить:</b> {len(errors)} пользователей"
+            
+            try:
+                if progress_message:
+                    await progress_message.edit_text(final_message, parse_mode="HTML")
+                else:
+                    # Если прогресс-сообщение не было создано, отправляем финальный результат
+                    await self.bot.send_message(
+                        chat_id=config.ADMIN_IDS[0],
+                        text=final_message,
+                        parse_mode="HTML"
+                    )
+            except Exception as e:
+                logger.error(f"Error sending final message: {e}")
         
         return True, success_count, total_count

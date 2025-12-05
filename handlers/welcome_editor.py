@@ -5,6 +5,8 @@ from aiogram.fsm.state import State, StatesGroup
 from services.database import db
 from utils.helpers import get_back_keyboard, get_mailing_type_keyboard
 import config
+import html
+from services.logger import logger
 
 router = Router()
 
@@ -16,9 +18,12 @@ class WelcomeEditor(StatesGroup):
 # Редактирование приветственного сообщения
 @router.callback_query(F.data == "edit_welcome")
 async def edit_welcome_start(callback: CallbackQuery, state: FSMContext):
+    """Начало редактирования приветственного сообщения"""
     if not callback.from_user.id in config.ADMIN_IDS:
         await callback.answer("⛔ Доступ запрещен")
         return
+    
+    await state.clear()
     
     current_welcome = db.get_welcome_message()
     trigger_mailings = db.get_active_trigger_mailings()
@@ -28,13 +33,21 @@ async def edit_welcome_start(callback: CallbackQuery, state: FSMContext):
     if trigger_mailings:
         trigger_info = "\n\n🔤 <b>Активные кодовые слова:</b>\n"
         for mailing in trigger_mailings:
-            if mailing.get('trigger_word'):
-                trigger_info += f"• <code>{mailing['trigger_word']}</code> - {mailing['title']}\n"
+            if mailing and mailing.get('trigger_word'):
+                # Безопасное экранирование HTML
+                safe_word = html.escape(mailing['trigger_word'])
+                safe_title = html.escape(mailing.get('title', 'Без названия'))
+                trigger_info += f"• <code>{safe_word}</code> - {safe_title}\n"
     
     if current_welcome:
+        # Обрезаем текст для отображения
+        message_text = current_welcome.get('message_text', '')
+        preview_text = message_text[:500] + "..." if len(message_text) > 500 else message_text
+        safe_preview = html.escape(preview_text)
+        
         text = (
             "👋 <b>Текущее приветственное сообщение:</b>\n\n"
-            f"{current_welcome['message_text'][:500]}...{trigger_info}\n\n"
+            f"{safe_preview}{trigger_info}\n\n"
             "Выберите действие:"
         )
     else:
@@ -59,6 +72,7 @@ async def edit_welcome_start(callback: CallbackQuery, state: FSMContext):
 # Список кодовых слов
 @router.callback_query(F.data == "trigger_words_list")
 async def trigger_words_list(callback: CallbackQuery):
+    """Просмотр списка кодовых слов"""
     trigger_mailings = db.get_active_trigger_mailings()
     
     if not trigger_mailings:
@@ -66,11 +80,16 @@ async def trigger_words_list(callback: CallbackQuery):
     else:
         text = "🔤 <b>Активные кодовые слова:</b>\n\n"
         for mailing in trigger_mailings:
-            if mailing.get('trigger_word'):
+            if mailing and mailing.get('trigger_word'):
                 stats = db.get_mailing_stats(mailing['id'])
-                text += f"• <b>{mailing['trigger_word']}</b> - {mailing['title']}\n"
-                text += f"  📊 Отправлено: {stats['delivered']} раз\n"
-                text += f"  📝 Текст: {mailing['message_text'][:50]}...\n\n"
+                # Безопасное экранирование HTML
+                safe_word = html.escape(mailing['trigger_word'])
+                safe_title = html.escape(mailing.get('title', 'Без названия'))
+                message_preview = html.escape(mailing.get('message_text', '')[:50])
+                
+                text += f"• <b>{safe_word}</b> - {safe_title}\n"
+                text += f"  📊 Отправлено: {stats.get('delivered', 0)} раз\n"
+                text += f"  📝 Текст: {message_preview}...\n\n"
     
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     keyboard = InlineKeyboardBuilder()
@@ -88,6 +107,7 @@ async def trigger_words_list(callback: CallbackQuery):
 # Начало редактирования текста
 @router.callback_query(F.data == "welcome_edit_text")
 async def welcome_edit_text_start(callback: CallbackQuery, state: FSMContext):
+    """Начало редактирования текста приветственного сообщения"""
     await state.set_state(WelcomeEditor.waiting_for_text)
     
     current_welcome = db.get_welcome_message()
@@ -98,8 +118,15 @@ async def welcome_edit_text_start(callback: CallbackQuery, state: FSMContext):
     if trigger_mailings:
         example_trigger_words = "\n\n🔤 <b>Доступные кодовые слова для примера:</b>\n"
         for mailing in trigger_mailings[:3]:  # Показываем первые 3
-            if mailing.get('trigger_word'):
-                example_trigger_words += f"• <code>{mailing['trigger_word']}</code>\n"
+            if mailing and mailing.get('trigger_word'):
+                safe_word = html.escape(mailing['trigger_word'])
+                example_trigger_words += f"• <code>{safe_word}</code>\n"
+    
+    # Безопасное отображение текущего текста
+    current_text = ""
+    if current_welcome:
+        message_text = current_welcome.get('message_text', '')
+        current_text = html.escape(message_text[:300])
     
     await callback.message.edit_text(
         "📝 <b>Редактирование приветственного сообщения</b>\n\n"
@@ -107,7 +134,7 @@ async def welcome_edit_text_start(callback: CallbackQuery, state: FSMContext):
         "💡 <b>Совет:</b> Упомяните в тексте кодовые слова, которые пользователи могут вводить.\n"
         "Например: \"Введите <code>прайс</code> чтобы получить актуальные цены\""
         f"{example_trigger_words}\n\n"
-        f"<i>Текущий текст:</i>\n{current_welcome['message_text'][:300] if current_welcome else 'Не установлен'}...",
+        f"<i>Текущий текст:</i>\n{current_text if current_text else 'Не установлен'}...",
         parse_mode="HTML",
         reply_markup=get_back_keyboard("edit_welcome")
     )
@@ -116,11 +143,18 @@ async def welcome_edit_text_start(callback: CallbackQuery, state: FSMContext):
 # Получение нового текста
 @router.message(WelcomeEditor.waiting_for_text)
 async def welcome_get_text(message: Message, state: FSMContext):
+    """Получение нового текста приветственного сообщения"""
     if not message.html_text and not message.text:
         await message.answer("❌ Текст не может быть пустым.")
         return
         
     text_content = message.html_text or message.text
+    
+    # Проверяем длину текста
+    if len(text_content) > 4000:
+        await message.answer("❌ Текст слишком длинный. Максимум 4000 символов.")
+        return
+    
     await state.update_data(message_text=text_content)
     await state.set_state(WelcomeEditor.waiting_for_media)
     
@@ -132,6 +166,7 @@ async def welcome_get_text(message: Message, state: FSMContext):
 # Выбор типа медиа для приветствия
 @router.callback_query(WelcomeEditor.waiting_for_media, F.data.startswith("mailing_type_"))
 async def welcome_select_media_type(callback: CallbackQuery, state: FSMContext):
+    """Выбор типа медиа для приветственного сообщения"""
     media_type = callback.data.replace("mailing_type_", "")
     
     await state.update_data(message_type=media_type)
@@ -163,6 +198,7 @@ async def welcome_select_media_type(callback: CallbackQuery, state: FSMContext):
     })
 )
 async def welcome_get_media(message: Message, state: FSMContext):
+    """Получение медиа для приветственного сообщения"""
     data = await state.get_data()
     media_type = data.get('message_type')
     
@@ -193,7 +229,16 @@ async def welcome_get_media(message: Message, state: FSMContext):
 
 # Сохранение приветственного сообщения
 async def welcome_finalize(update, state: FSMContext):
+    """Сохранение приветственного сообщения"""
     data = await state.get_data()
+    
+    # Проверяем обязательные поля
+    if 'message_text' not in data:
+        if update.__class__.__name__ == "CallbackQuery":
+            await update.message.answer("❌ Текст сообщения не указан")
+        else:
+            await update.answer("❌ Текст сообщения не указан")
+        return
     
     success = db.update_welcome_message(
         message_text=data['message_text'],
@@ -213,6 +258,7 @@ async def welcome_finalize(update, state: FSMContext):
             parse_mode="HTML",
             reply_markup=get_back_keyboard("admin_main")
         )
+        logger.log_admin_action(message.chat.id, "updated welcome message")
     else:
         if update.__class__.__name__ == "CallbackQuery":
             await update.message.answer("❌ Ошибка при обновлении приветственного сообщения")
@@ -224,6 +270,7 @@ async def welcome_finalize(update, state: FSMContext):
 # Просмотр приветственного сообщения
 @router.callback_query(F.data == "welcome_preview")
 async def welcome_preview(callback: CallbackQuery, bot: Bot):
+    """Просмотр приветственного сообщения"""
     welcome = db.get_welcome_message()
     
     if not welcome:
@@ -231,52 +278,58 @@ async def welcome_preview(callback: CallbackQuery, bot: Bot):
         return
     
     try:
-        if welcome['message_type'] == "text":
+        message_text = welcome.get('message_text', '')
+        media_file_id = welcome.get('media_file_id')
+        message_type = welcome.get('message_type', 'text')
+        
+        if message_type == "text":
             await bot.send_message(
                 chat_id=callback.from_user.id,
-                text=welcome['message_text'],
+                text=message_text,
                 parse_mode="HTML"
             )
-        elif welcome['message_type'] == "photo":
+        elif message_type == "photo" and media_file_id:
             await bot.send_photo(
                 chat_id=callback.from_user.id,
-                photo=welcome['media_file_id'],
-                caption=welcome['message_text'],
+                photo=media_file_id,
+                caption=message_text,
                 parse_mode="HTML"
             )
-        elif welcome['message_type'] == "video":
+        elif message_type == "video" and media_file_id:
             await bot.send_video(
                 chat_id=callback.from_user.id,
-                video=welcome['media_file_id'],
-                caption=welcome['message_text'],
+                video=media_file_id,
+                caption=message_text,
                 parse_mode="HTML"
             )
-        elif welcome['message_type'] == "document":
+        elif message_type == "document" and media_file_id:
             await bot.send_document(
                 chat_id=callback.from_user.id,
-                document=welcome['media_file_id'],
-                caption=welcome['message_text'],
+                document=media_file_id,
+                caption=message_text,
                 parse_mode="HTML"
             )
-        elif welcome['message_type'] == "voice":
+        elif message_type == "voice" and media_file_id:
             await bot.send_voice(
                 chat_id=callback.from_user.id,
-                voice=welcome['media_file_id'],
-                caption=welcome['message_text'],
+                voice=media_file_id,
+                caption=message_text,
                 parse_mode="HTML"
             )
-        elif welcome['message_type'] == "video_note":
+        elif message_type == "video_note" and media_file_id:
             await bot.send_video_note(
                 chat_id=callback.from_user.id,
-                video_note=welcome['media_file_id']
+                video_note=media_file_id
             )
-            if welcome['message_text']:
+            if message_text:
                 await bot.send_message(
                     chat_id=callback.from_user.id,
-                    text=welcome['message_text'],
+                    text=message_text,
                     parse_mode="HTML"
                 )
         
         await callback.answer("👆 Предпросмотр отправлен в чат")
+        
     except Exception as e:
+        logger.error(f"Error sending welcome preview: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при отправке предпросмотра")

@@ -12,7 +12,12 @@ from utils.helpers import (
     get_back_keyboard,
     get_logs_keyboard,
     get_pagination_keyboard,
-    get_mailing_actions_keyboard
+    get_mailing_actions_keyboard,
+    get_target_group_name,
+    format_stats_overview,
+    format_users_stats,
+    format_mailings_stats,
+    format_mailing_preview
 )
 import config
 import os
@@ -23,16 +28,22 @@ import math
 
 router = Router()
 
-def is_admin(user_id: int):
+def is_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь администратором"""
+    if not config.ADMIN_IDS:
+        logger.warning("ADMIN_IDS not configured or empty")
+        return False
     return user_id in config.ADMIN_IDS
 
 # Главная команда админа
 @router.message(Command("admin"))
-async def cmd_admin(message: Message):
+async def cmd_admin(message: Message, state: FSMContext):
+    """Обработка команды /admin"""
     if not is_admin(message.from_user.id):
         await message.answer("⛔ Доступ запрещен")
         return
     
+    await state.clear()
     await message.answer(
         "👨‍💻 <b>Админ панель</b>\n\n"
         "Выберите раздел для управления:",
@@ -43,11 +54,13 @@ async def cmd_admin(message: Message):
 
 # 📊 РАЗДЕЛ СТАТИСТИКИ
 @router.callback_query(F.data == "admin_stats")
-async def admin_stats(callback: CallbackQuery):
+async def admin_stats(callback: CallbackQuery, state: FSMContext):
+    """Меню статистики"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
+    await state.clear()
     await callback.message.edit_text(
         "📊 <b>Статистика</b>\n\n"
         "Выберите тип статистики для просмотра:",
@@ -59,12 +72,12 @@ async def admin_stats(callback: CallbackQuery):
 # Общая статистика
 @router.callback_query(F.data == "stats_overview")
 async def stats_overview(callback: CallbackQuery):
+    """Общая статистика бота"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
     try:
-        from utils.helpers import format_stats_overview
         stats_text = format_stats_overview()
         await callback.message.edit_text(
             stats_text,
@@ -74,7 +87,7 @@ async def stats_overview(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading stats overview: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке статистики: {str(e)}",
+            f"❌ Ошибка при загрузке статистики: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_stats")
         )
     await callback.answer()
@@ -82,12 +95,12 @@ async def stats_overview(callback: CallbackQuery):
 # Статистика пользователей
 @router.callback_query(F.data == "stats_users")
 async def stats_users(callback: CallbackQuery):
+    """Статистика пользователей"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
     try:
-        from utils.helpers import format_users_stats
         stats_text = format_users_stats()
         await callback.message.edit_text(
             stats_text,
@@ -97,7 +110,7 @@ async def stats_users(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading user stats: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке статистики пользователей: {str(e)}",
+            f"❌ Ошибка при загрузке статистики пользователей: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_stats")
         )
     await callback.answer()
@@ -105,12 +118,12 @@ async def stats_users(callback: CallbackQuery):
 # Статистика рассылок
 @router.callback_query(F.data == "stats_mailings")
 async def stats_mailings(callback: CallbackQuery):
+    """Статистика рассылок"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
     try:
-        from utils.helpers import format_mailings_stats
         stats_text = format_mailings_stats()
         await callback.message.edit_text(
             stats_text,
@@ -120,18 +133,20 @@ async def stats_mailings(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading mailing stats: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке статистики рассылок: {str(e)}",
+            f"❌ Ошибка при загрузке статистики рассылок: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_stats")
         )
     await callback.answer()
 
 # 📨 РАЗДЕЛ РАССЫЛОК
 @router.callback_query(F.data == "admin_mailings")
-async def admin_mailings(callback: CallbackQuery):
+async def admin_mailings(callback: CallbackQuery, state: FSMContext):
+    """Меню управления рассылками"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
+    await state.clear()
     await callback.message.edit_text(
         "📨 <b>Управление рассылками</b>\n\n"
         "Выберите действие:",
@@ -143,6 +158,7 @@ async def admin_mailings(callback: CallbackQuery):
 # Активные рассылки с пагинацией
 @router.callback_query(F.data.startswith("mailings_active_"))
 async def mailings_active(callback: CallbackQuery):
+    """Просмотр активных рассылок с пагинацией"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -182,19 +198,21 @@ async def mailings_active(callback: CallbackQuery):
         
         for mailing in current_mailings:
             stats = db.get_mailing_stats(mailing['id'])
-            created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
+            created_at = ""
+            if mailing.get('created_at'):
+                created_at = mailing['created_at'].strftime('%d.%m.%Y')
             
             # Добавляем информацию о кодовом слове, если есть
             trigger_word_info = ""
             if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
                 trigger_word_info = f" 🔤{mailing['trigger_word']}"
             
-            text += f"📨 {mailing['title']}{trigger_word_info}\n"
+            text += f"📨 {mailing['title'][:50]}{trigger_word_info}\n"
             text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
             text += f"   🕐 Создана: {created_at}\n"
             text += f"   [ID: {mailing['id']}]\n\n"
         
-        # Создаем клавиатуру с пагинацией
+        # Создаем клавиатуру
         keyboard = InlineKeyboardBuilder()
         
         for mailing in current_mailings:
@@ -214,14 +232,18 @@ async def mailings_active(callback: CallbackQuery):
         
         # Объединяем клавиатуры
         combined_keyboard = InlineKeyboardBuilder()
+        
+        # Добавляем кнопки рассылок
         for button in keyboard.export():
             combined_keyboard.add(button)
         
-        for button in pagination_keyboard.inline_keyboard[0]:
-            combined_keyboard.add(InlineKeyboardButton(
-                text=button.text,
-                callback_data=button.callback_data
-            ))
+        # Добавляем кнопки пагинации
+        if pagination_keyboard.inline_keyboard:
+            for button in pagination_keyboard.inline_keyboard[0]:
+                combined_keyboard.add(InlineKeyboardButton(
+                    text=button.text,
+                    callback_data=button.callback_data
+                ))
         
         combined_keyboard.adjust(1, 3)
         
@@ -233,7 +255,7 @@ async def mailings_active(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading active mailings: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке активных рассылок: {str(e)}",
+            f"❌ Ошибка при загрузке активных рассылок: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -241,6 +263,7 @@ async def mailings_active(callback: CallbackQuery):
 # Черновики с пагинацией
 @router.callback_query(F.data.startswith("mailings_drafts_"))
 async def mailings_drafts(callback: CallbackQuery):
+    """Просмотр черновиков с пагинацией"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -278,14 +301,16 @@ async def mailings_drafts(callback: CallbackQuery):
         text = f"📝 <b>Черновики рассылок (страница {page}/{total_pages}):</b>\n\n"
         
         for mailing in current_mailings:
-            created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
+            created_at = ""
+            if mailing.get('created_at'):
+                created_at = mailing['created_at'].strftime('%d.%m.%Y')
             
             # Добавляем информация о кодовом слове, если есть
             trigger_word_info = ""
             if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
                 trigger_word_info = f" 🔤{mailing['trigger_word']}"
             
-            text += f"📄 {mailing['title']}{trigger_word_info}\n"
+            text += f"📄 {mailing['title'][:50]}{trigger_word_info}\n"
             text += f"   🕐 Создан: {created_at}\n"
             text += f"   [ID: {mailing['id']}]\n\n"
         
@@ -312,11 +337,12 @@ async def mailings_drafts(callback: CallbackQuery):
         for button in keyboard.export():
             combined_keyboard.add(button)
         
-        for button in pagination_keyboard.inline_keyboard[0]:
-            combined_keyboard.add(InlineKeyboardButton(
-                text=button.text,
-                callback_data=button.callback_data
-            ))
+        if pagination_keyboard.inline_keyboard:
+            for button in pagination_keyboard.inline_keyboard[0]:
+                combined_keyboard.add(InlineKeyboardButton(
+                    text=button.text,
+                    callback_data=button.callback_data
+                ))
         
         combined_keyboard.adjust(1, 3)
         
@@ -328,7 +354,7 @@ async def mailings_drafts(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading draft mailings: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке черновиков: {str(e)}",
+            f"❌ Ошибка при загрузке черновиков: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -336,6 +362,7 @@ async def mailings_drafts(callback: CallbackQuery):
 # Архив рассылок с пагинацией
 @router.callback_query(F.data.startswith("mailings_archive_"))
 async def mailings_archive(callback: CallbackQuery):
+    """Просмотр архива рассылок с пагинацией"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -374,14 +401,16 @@ async def mailings_archive(callback: CallbackQuery):
         
         for mailing in current_mailings:
             stats = db.get_mailing_stats(mailing['id'])
-            created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
+            created_at = ""
+            if mailing.get('created_at'):
+                created_at = mailing['created_at'].strftime('%d.%m.%Y')
             
             # Добавляем информация о кодовом слове, если есть
             trigger_word_info = ""
             if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
                 trigger_word_info = f" 🔤{mailing['trigger_word']}"
             
-            text += f"📨 {mailing['title']}{trigger_word_info}\n"
+            text += f"📨 {mailing['title'][:50]}{trigger_word_info}\n"
             text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
             text += f"   🕐 Создана: {created_at}\n"
             text += f"   [ID: {mailing['id']}]\n\n"
@@ -409,11 +438,12 @@ async def mailings_archive(callback: CallbackQuery):
         for button in keyboard.export():
             combined_keyboard.add(button)
         
-        for button in pagination_keyboard.inline_keyboard[0]:
-            combined_keyboard.add(InlineKeyboardButton(
-                text=button.text,
-                callback_data=button.callback_data
-            ))
+        if pagination_keyboard.inline_keyboard:
+            for button in pagination_keyboard.inline_keyboard[0]:
+                combined_keyboard.add(InlineKeyboardButton(
+                    text=button.text,
+                    callback_data=button.callback_data
+                ))
         
         combined_keyboard.adjust(1, 3)
         
@@ -425,7 +455,7 @@ async def mailings_archive(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading archived mailings: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке архива: {str(e)}",
+            f"❌ Ошибка при загрузке архива: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -433,6 +463,7 @@ async def mailings_archive(callback: CallbackQuery):
 # Меню отправки рассылки
 @router.callback_query(F.data == "mailings_send")
 async def mailings_send(callback: CallbackQuery):
+    """Меню выбора рассылки для отправки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -454,9 +485,9 @@ async def mailings_send(callback: CallbackQuery):
         
         for mailing in active_mailings:
             # Добавляем иконку кодового слова к названию
-            mailing_title = mailing['title']
+            mailing_title = mailing['title'][:30] + "..." if len(mailing['title']) > 30 else mailing['title']
             if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                mailing_title = f"🔤 {mailing['trigger_word']} ({mailing['title'][:15]}...)"
+                mailing_title = f"🔤 {mailing['trigger_word']} ({mailing_title})"
             
             keyboard.add(InlineKeyboardButton(
                 text=f"📨 {mailing_title}",
@@ -474,7 +505,7 @@ async def mailings_send(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading mailings for sending: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке рассылок: {str(e)}",
+            f"❌ Ошибка при загрузке рассылок: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -482,6 +513,7 @@ async def mailings_send(callback: CallbackQuery):
 # Выбор целевой группы
 @router.callback_query(F.data.startswith("select_mailing_"))
 async def select_mailing_target(callback: CallbackQuery):
+    """Выбор целевой группы для рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -489,7 +521,12 @@ async def select_mailing_target(callback: CallbackQuery):
     try:
         from services.database import db
         
-        mailing_id = int(callback.data.replace("select_mailing_", ""))
+        mailing_id_str = callback.data.replace("select_mailing_", "")
+        if not mailing_id_str.isdigit():
+            await callback.answer("❌ Неверный ID рассылки")
+            return
+            
+        mailing_id = int(mailing_id_str)
         mailing = db.get_mailing(mailing_id)
         
         if not mailing:
@@ -509,7 +546,7 @@ async def select_mailing_target(callback: CallbackQuery):
         
         await callback.message.edit_text(
             f"🎯 <b>Выбор целевой группы</b>\n\n"
-            f"📨 <b>Рассылка:</b> {mailing['title']}{trigger_info}\n\n"
+            f"📨 <b>Рассылка:</b> {mailing['title'][:100]}{trigger_info}\n\n"
             f"👥 <b>Доступные группы:</b>\n"
             f"   • Все пользователи: {users_count} чел.\n"
             f"   • Активные сегодня: {active_today} чел.\n"
@@ -522,35 +559,43 @@ async def select_mailing_target(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error selecting mailing: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при выборе рассылки: {str(e)}",
+            f"❌ Ошибка при выборе рассылки: {str(e)[:200]}",
             reply_markup=get_back_keyboard("mailings_send")
         )
     await callback.answer()
 
 # Запуск рассылки - ВАЖНОЕ ИСПРАВЛЕНИЕ
 @router.callback_query(F.data.startswith("target:"))
-async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
+async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    """Запуск рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
     try:
         from services.database import db
-        from utils.helpers import get_target_group_name
         
         # Правильный разбор callback_data
         data_parts = callback.data.split(":")
-        if len(data_parts) != 3:
+        if len(data_parts) < 3:
             await callback.answer("❌ Ошибка в данных")
             return
             
         target_group = data_parts[1]  # all, active, new_week, new_month
-        mailing_id = int(data_parts[2])
         
+        # Получаем mailing_id из оставшейся части (может содержать дополнительные двоеточия)
+        mailing_id_str = ":".join(data_parts[2:])
+        if not mailing_id_str.isdigit():
+            await callback.answer("❌ Неверный ID рассылки")
+            return
+            
+        mailing_id = int(mailing_id_str)
         mailing = db.get_mailing(mailing_id)
         if not mailing:
             await callback.answer("❌ Рассылка не найдена")
             return
+        
+        await state.clear()
         
         from services.mailing import MailingService
         mailing_service = MailingService(bot)
@@ -565,7 +610,7 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
         if success:
             await callback.message.edit_text(
                 f"✅ <b>Рассылка завершена!</b>\n\n"
-                f"📋 <b>Рассылка:</b> {mailing['title']}\n"
+                f"📋 <b>Рассылка:</b> {mailing['title'][:100]}\n"
                 f"🎯 <b>Целевая группа:</b> {get_target_group_name(target_group)}\n"
                 f"📤 <b>Отправлено:</b> {success_count}/{total_count} сообщений\n"
                 f"📊 <b>Успешных:</b> {(success_count/total_count*100 if total_count > 0 else 0):.1f}%",
@@ -583,18 +628,20 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error starting mailing broadcast: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при запуске рассылки: {str(e)}",
+            f"❌ Ошибка при запуске рассылки: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
 
 # 👥 РАЗДЕЛ ПОЛЬЗОВАТЕЛЕЙ
 @router.callback_query(F.data == "admin_users")
-async def admin_users(callback: CallbackQuery):
+async def admin_users(callback: CallbackQuery, state: FSMContext):
+    """Меню управления пользователями"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
+    await state.clear()
     await callback.message.edit_text(
         "👥 <b>Управление пользователями</b>\n\n"
         "Выберите действие:",
@@ -606,6 +653,7 @@ async def admin_users(callback: CallbackQuery):
 # Список пользователей
 @router.callback_query(F.data == "users_list")
 async def users_list(callback: CallbackQuery):
+    """Список пользователей"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -629,7 +677,7 @@ async def users_list(callback: CallbackQuery):
             text += f"{status} {user.full_name or 'Без имени'}\n"
             text += f"   👤 {username}\n"
             text += f"   🆔 ID: {user.user_id}\n"
-            text += f"   🕐 Регистрация: {user.joined_at.strftime('%d.%m.%Y')}\n\n"
+            text += f"   🕐 Регистрация: {user.joined_at.strftime('%d.%m.%Y') if user.joined_at else 'неизвестно'}\n\n"
         
         if len(users) > 10:
             text += f"... и еще {len(users) - 10} пользователей"
@@ -642,7 +690,7 @@ async def users_list(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading users list: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке пользователей: {str(e)}",
+            f"❌ Ошибка при загрузке пользователей: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_users")
         )
     await callback.answer()
@@ -650,6 +698,7 @@ async def users_list(callback: CallbackQuery):
 # Активные сегодня
 @router.callback_query(F.data == "users_active_today")
 async def users_active_today(callback: CallbackQuery):
+    """Активные пользователи сегодня"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -670,7 +719,7 @@ async def users_active_today(callback: CallbackQuery):
         for user in users[:10]:
             text += f"🟢 {user.full_name or 'Без имени'}\n"
             text += f"   👤 @{user.username or 'без username'}\n"
-            text += f"   ⏰ Активность: {user.last_activity.strftime('%H:%M')}\n\n"
+            text += f"   ⏰ Активность: {user.last_activity.strftime('%H:%M') if user.last_activity else 'неизвестно'}\n\n"
         
         if len(users) > 10:
             text += f"... и еще {len(users) - 10} пользователей"
@@ -683,7 +732,7 @@ async def users_active_today(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading active users: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке активных пользователей: {str(e)}",
+            f"❌ Ошибка при загрузке активных пользователей: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_users")
         )
     await callback.answer()
@@ -691,6 +740,7 @@ async def users_active_today(callback: CallbackQuery):
 # Аналитика активности
 @router.callback_query(F.data == "users_analytics")
 async def users_analytics(callback: CallbackQuery):
+    """Аналитика активности пользователей"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -736,7 +786,7 @@ async def users_analytics(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error loading user analytics: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке аналитики: {str(e)}",
+            f"❌ Ошибка при загрузке аналитики: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_users")
         )
     await callback.answer()
@@ -744,6 +794,7 @@ async def users_analytics(callback: CallbackQuery):
 # Главное меню
 @router.callback_query(F.data == "admin_main")
 async def admin_main(callback: CallbackQuery, state: FSMContext):
+    """Возврат в главное меню админ-панели"""
     await state.clear()
     await callback.message.edit_text(
         "👨‍💻 <b>Админ панель</b>\n\n"
@@ -756,6 +807,7 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
 # Экспорт в Excel
 @router.callback_query(F.data == "export_excel")
 async def export_to_excel(callback: CallbackQuery, bot: Bot):
+    """Экспорт статистики в Excel"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -793,8 +845,9 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
         try:
             # Ждем немного перед удалением
             await asyncio.sleep(5)
-            os.remove(filepath)
-            logger.debug(f"Removed temporary export file: {filepath}")
+            if os.path.exists(filepath):
+                os.remove(filepath)
+                logger.debug(f"Removed temporary export file: {filepath}")
         except Exception as e:
             logger.warning(f"Could not remove temp file {filepath}: {e}")
             
@@ -812,7 +865,7 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error generating Excel report: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при генерации отчета: {str(e)}",
+            f"❌ Ошибка при генерации отчета: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_stats")
         )
     await callback.answer()
@@ -820,15 +873,20 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
 # Просмотр конкретной рассылки
 @router.callback_query(F.data.startswith("view_mailing_"))
 async def view_mailing(callback: CallbackQuery):
+    """Просмотр деталей рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
     
     try:
         from services.database import db
-        from utils.helpers import format_mailing_preview, get_mailing_actions_keyboard
         
-        mailing_id = int(callback.data.replace("view_mailing_", ""))
+        mailing_id_str = callback.data.replace("view_mailing_", "")
+        if not mailing_id_str.isdigit():
+            await callback.answer("❌ Неверный ID рассылки")
+            return
+            
+        mailing_id = int(mailing_id_str)
         mailing = db.get_mailing(mailing_id)
         
         if not mailing:
@@ -842,9 +900,9 @@ async def view_mailing(callback: CallbackQuery):
             reply_markup=get_mailing_actions_keyboard(mailing_id, mailing['status'])
         )
     except Exception as e:
-        logger.error(f"Error viewing mailing {mailing_id}: {e}", exc_info=True)
+        logger.error(f"Error viewing mailing {mailing_id_str}: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке рассылки: {str(e)}",
+            f"❌ Ошибка при загрузке рассылки: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -852,6 +910,7 @@ async def view_mailing(callback: CallbackQuery):
 # Архивирование рассылки
 @router.callback_query(F.data.startswith("archive_mailing_"))
 async def archive_mailing(callback: CallbackQuery):
+    """Архивирование рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -859,19 +918,27 @@ async def archive_mailing(callback: CallbackQuery):
     try:
         from services.database import db
         
-        mailing_id = int(callback.data.replace("archive_mailing_", ""))
-        db.change_mailing_status(mailing_id, "archived")
+        mailing_id_str = callback.data.replace("archive_mailing_", "")
+        if not mailing_id_str.isdigit():
+            await callback.answer("❌ Неверный ID рассылки")
+            return
+            
+        mailing_id = int(mailing_id_str)
+        success = db.change_mailing_status(mailing_id, "archived")
         
-        await callback.answer("✅ Рассылка перемещена в архив")
-        await callback.message.answer(
-            "✅ Рассылка перемещена в архив",
-            reply_markup=get_back_keyboard("admin_mailings")
-        )
-        logger.log_admin_action(callback.from_user.id, f"archived mailing {mailing_id}")
+        if success:
+            await callback.answer("✅ Рассылка перемещена в архив")
+            await callback.message.answer(
+                "✅ Рассылка перемещена в архив",
+                reply_markup=get_back_keyboard("admin_mailings")
+            )
+            logger.log_admin_action(callback.from_user.id, f"archived mailing {mailing_id}")
+        else:
+            await callback.answer("❌ Ошибка при архивировании")
     except Exception as e:
-        logger.error(f"Error archiving mailing {mailing_id}: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при архивировании рассылки: {str(e)}",
+        logger.error(f"Error archiving mailing: {e}", exc_info=True)
+        await callback.message.answer(
+            f"❌ Ошибка при архивировании рассылки: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -879,6 +946,7 @@ async def archive_mailing(callback: CallbackQuery):
 # Активация рассылки
 @router.callback_query(F.data.startswith("activate_mailing_"))
 async def activate_mailing(callback: CallbackQuery):
+    """Активация рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -886,19 +954,27 @@ async def activate_mailing(callback: CallbackQuery):
     try:
         from services.database import db
         
-        mailing_id = int(callback.data.replace("activate_mailing_", ""))
-        db.change_mailing_status(mailing_id, "active")
+        mailing_id_str = callback.data.replace("activate_mailing_", "")
+        if not mailing_id_str.isdigit():
+            await callback.answer("❌ Неверный ID рассылки")
+            return
+            
+        mailing_id = int(mailing_id_str)
+        success = db.change_mailing_status(mailing_id, "active")
         
-        await callback.answer("✅ Рассылка активирована")
-        await callback.message.answer(
-            "✅ Рассылка активирована и готова к отправке",
-            reply_markup=get_back_keyboard("admin_mailings")
-        )
-        logger.log_admin_action(callback.from_user.id, f"activated mailing {mailing_id}")
+        if success:
+            await callback.answer("✅ Рассылка активирована")
+            await callback.message.answer(
+                "✅ Рассылка активирована и готова к отправке",
+                reply_markup=get_back_keyboard("admin_mailings")
+            )
+            logger.log_admin_action(callback.from_user.id, f"activated mailing {mailing_id}")
+        else:
+            await callback.answer("❌ Ошибка при активации")
     except Exception as e:
-        logger.error(f"Error activating mailing {mailing_id}: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при активации рассылки: {str(e)}",
+        logger.error(f"Error activating mailing: {e}", exc_info=True)
+        await callback.message.answer(
+            f"❌ Ошибка при активации рассылки: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -906,6 +982,7 @@ async def activate_mailing(callback: CallbackQuery):
 # Удаление рассылки
 @router.callback_query(F.data.startswith("delete_mailing_"))
 async def delete_mailing(callback: CallbackQuery):
+    """Удаление рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -913,19 +990,27 @@ async def delete_mailing(callback: CallbackQuery):
     try:
         from services.database import db
         
-        mailing_id = int(callback.data.replace("delete_mailing_", ""))
-        db.change_mailing_status(mailing_id, "deleted")
+        mailing_id_str = callback.data.replace("delete_mailing_", "")
+        if not mailing_id_str.isdigit():
+            await callback.answer("❌ Неверный ID рассылки")
+            return
+            
+        mailing_id = int(mailing_id_str)
+        success = db.change_mailing_status(mailing_id, "deleted")
         
-        await callback.answer("✅ Рассылка удалена")
-        await callback.message.answer(
-            "✅ Рассылка удалена",
-            reply_markup=get_back_keyboard("admin_mailings")
-        )
-        logger.log_admin_action(callback.from_user.id, f"deleted mailing {mailing_id}")
+        if success:
+            await callback.answer("✅ Рассылка удалена")
+            await callback.message.answer(
+                "✅ Рассылка удалена",
+                reply_markup=get_back_keyboard("admin_mailings")
+            )
+            logger.log_admin_action(callback.from_user.id, f"deleted mailing {mailing_id}")
+        else:
+            await callback.answer("❌ Ошибка при удалении")
     except Exception as e:
-        logger.error(f"Error deleting mailing {mailing_id}: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при удалении рассылки: {str(e)}",
+        logger.error(f"Error deleting mailing: {e}", exc_info=True)
+        await callback.message.answer(
+            f"❌ Ошибка при удалении рассылки: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -933,6 +1018,7 @@ async def delete_mailing(callback: CallbackQuery):
 # Обработка кнопки отправки конкретной рассылки
 @router.callback_query(F.data.startswith("send_mailing_"))
 async def send_specific_mailing(callback: CallbackQuery, bot: Bot):
+    """Отправка конкретной рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -940,7 +1026,12 @@ async def send_specific_mailing(callback: CallbackQuery, bot: Bot):
     try:
         from services.database import db
         
-        mailing_id = int(callback.data.replace("send_mailing_", ""))
+        mailing_id_str = callback.data.replace("send_mailing_", "")
+        if not mailing_id_str.isdigit():
+            await callback.answer("❌ Неверный ID рассылки")
+            return
+            
+        mailing_id = int(mailing_id_str)
         mailing = db.get_mailing(mailing_id)
         
         if not mailing:
@@ -949,16 +1040,16 @@ async def send_specific_mailing(callback: CallbackQuery, bot: Bot):
         
         await callback.message.edit_text(
             f"🎯 <b>Выбор целевой группы для рассылки</b>\n\n"
-            f"📨 Рассылка: <b>{mailing['title']}</b>\n\n"
+            f"📨 Рассылка: <b>{mailing['title'][:100]}</b>\n\n"
             "Выберите целевую группу:",
             reply_markup=get_target_groups_keyboard(mailing_id),
             parse_mode="HTML"
         )
         logger.log_admin_action(callback.from_user.id, f"initiated sending for mailing {mailing_id}")
     except Exception as e:
-        logger.error(f"Error initiating mailing send {mailing_id}: {e}", exc_info=True)
+        logger.error(f"Error initiating mailing send: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при выборе рассылки: {str(e)}",
+            f"❌ Ошибка при выборе рассылки: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
     await callback.answer()
@@ -966,6 +1057,7 @@ async def send_specific_mailing(callback: CallbackQuery, bot: Bot):
 # Получение логов
 @router.callback_query(F.data == "get_logs")
 async def get_logs_menu(callback: CallbackQuery):
+    """Меню получения логов"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -980,13 +1072,14 @@ async def get_logs_menu(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in get_logs_menu: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при загрузке меню логов: {str(e)}",
+            f"❌ Ошибка при загрузке меню логов: {str(e)[:200]}",
             reply_markup=get_back_keyboard("admin_stats")
         )
     await callback.answer()
 
 @router.callback_query(F.data == "logs_current")
 async def send_current_month_logs(callback: CallbackQuery, bot: Bot):
+    """Отправка логов за текущий месяц"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -1025,13 +1118,14 @@ async def send_current_month_logs(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error sending current month logs: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при отправке логов: {str(e)}",
+            f"❌ Ошибка при отправке логов: {str(e)[:200]}",
             reply_markup=get_back_keyboard("get_logs")
         )
     await callback.answer()
 
 @router.callback_query(F.data == "logs_previous")
 async def send_previous_month_logs(callback: CallbackQuery, bot: Bot):
+    """Отправка логов за предыдущий месяц"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -1072,172 +1166,14 @@ async def send_previous_month_logs(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error sending previous month logs: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при отправке логов: {str(e)}",
+            f"❌ Ошибка при отправке логов: {str(e)[:200]}",
             reply_markup=get_back_keyboard("get_logs")
-        )
-    await callback.answer()
-
-@router.callback_query(F.data == "storage_stats")
-async def storage_stats(callback: CallbackQuery):
-    """Статистика хранилища медиафайлов"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещен")
-        return
-    
-    try:
-        from services.media_storage import media_storage
-        
-        stats = media_storage.get_storage_stats()
-        
-        # Форматируем информация о типах файлов
-        file_types_info = ""
-        for file_type, count in stats.get('file_types', {}).items():
-            file_types_info += f"   • {file_type}: {count} файлов\n"
-        
-        text = f"""
-📦 <b>Статистика хранилища медиафайлов</b>
-
-📁 <b>Общая информация:</b>
-   • Всего файлов: {stats['total_files']}
-   • Размер хранилища: {stats['total_size_mb']:.2f} MB
-   • Записей в метаданных: {stats['metadata_entries']}
-   • Возраст самого старого файла: {stats['oldest_file_days']} дней
-
-📊 <b>Файлы по типам:</b>
-{file_types_info}
-
-📍 <b>Путь к хранилищу:</b>
-<code>{stats['storage_path']}</code>
-
-⚙️ <b>Настройки очистки:</b>
-• Автоматически удаляются файлы старше 180 дней
-• Очистка выполняется каждые 24 часа
-        """
-        
-        # Создаем клавиатуру с кнопками управления
-        keyboard = InlineKeyboardBuilder()
-        keyboard.add(InlineKeyboardButton(
-            text="🧹 Очистить файлы старше 180 дней", 
-            callback_data="storage_cleanup_180"
-        ))
-        keyboard.add(InlineKeyboardButton(
-            text="⚠️ Очистить неиспользуемые 30+ дней", 
-            callback_data="storage_cleanup_30"
-        ))
-        keyboard.add(InlineKeyboardButton(text="🔄 Обновить статистику", callback_data="storage_stats"))
-        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
-        keyboard.adjust(1)
-        
-        await callback.message.edit_text(
-            text,
-            reply_markup=keyboard.as_markup(),
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        logger.error(f"Error loading storage stats: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при загрузке статистики хранилища: {str(e)}",
-            reply_markup=get_back_keyboard("admin_stats")
-        )
-    await callback.answer()
-
-@router.callback_query(F.data == "storage_cleanup_180")
-async def storage_cleanup_180(callback: CallbackQuery):
-    """Очистка файлов старше 180 дней"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещен")
-        return
-    
-    try:
-        from services.media_storage import media_storage
-        
-        await callback.message.edit_text("🧹 Очищаю файлы старше 180 дней...")
-        
-        stats = media_storage.cleanup_old_files(days_old=180)
-        
-        text = f"""
-✅ <b>Очистка завершена!</b>
-
-📊 <b>Результаты:</b>
-   • Удалено файлов: {stats['deleted']}
-   • Оставлено файлов: {stats['kept']}
-   • Всего записей: {stats['total_metadata']}
-
-⚙️ <b>Критерии очистки:</b>
-• Удалены файлы, которые не использовались 180+ дней
-• Метаданные обновлены
-        """
-        
-        keyboard = InlineKeyboardBuilder()
-        keyboard.add(InlineKeyboardButton(text="📊 Обновить статистику", callback_data="storage_stats"))
-        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
-        keyboard.adjust(1)
-        
-        await callback.message.edit_text(
-            text,
-            reply_markup=keyboard.as_markup(),
-            parse_mode="HTML"
-        )
-        
-        logger.log_admin_action(callback.from_user.id, f"cleaned storage (180 days): deleted {stats['deleted']} files")
-        
-    except Exception as e:
-        logger.error(f"Error cleaning storage: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при очистке хранилища: {str(e)}",
-            reply_markup=get_back_keyboard("storage_stats")
-        )
-    await callback.answer()
-
-@router.callback_query(F.data == "storage_cleanup_30")
-async def storage_cleanup_30(callback: CallbackQuery):
-    """Очистка неиспользуемых файлов (30+ дней)"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещен")
-        return
-    
-    try:
-        from services.media_storage import media_storage
-        
-        await callback.message.edit_text("⚠️ Очищаю файлы, неиспользуемые 30+ дней...")
-        
-        deleted_count = media_storage.force_cleanup_all_unused(days_unused=30)
-        
-        text = f"""
-⚠️ <b>Принудительная очистка завершена!</b>
-
-📊 <b>Результаты:</b>
-   • Удалено файлов: {deleted_count}
-
-❗ <b>Внимание:</b>
-• Удалены ВСЕ файлы, которые не использовались 30+ дней
-• Включая файлы, которые могут понадобиться в будущем
-• Используйте осторожно!
-        """
-        
-        keyboard = InlineKeyboardBuilder()
-        keyboard.add(InlineKeyboardButton(text="📊 Обновить статистику", callback_data="storage_stats"))
-        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
-        keyboard.adjust(1)
-        
-        await callback.message.edit_text(
-            text,
-            reply_markup=keyboard.as_markup(),
-            parse_mode="HTML"
-        )
-        
-        logger.log_admin_action(callback.from_user.id, f"force cleaned storage (30 days): deleted {deleted_count} files")
-        
-    except Exception as e:
-        logger.error(f"Error force cleaning storage: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при принудительной очистке хранилища: {str(e)}",
-            reply_markup=get_back_keyboard("storage_stats")
         )
     await callback.answer()
 
 @router.callback_query(F.data == "logs_all")
 async def send_all_logs(callback: CallbackQuery, bot: Bot):
+    """Отправка всех доступных логов"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -1281,7 +1217,170 @@ async def send_all_logs(callback: CallbackQuery, bot: Bot):
     except Exception as e:
         logger.error(f"Error sending all logs: {e}", exc_info=True)
         await callback.message.edit_text(
-            f"❌ Ошибка при отправке логов: {str(e)}",
+            f"❌ Ошибка при отправке логов: {str(e)[:200]}",
             reply_markup=get_back_keyboard("get_logs")
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "storage_stats")
+async def storage_stats(callback: CallbackQuery):
+    """Статистика хранилища медиафайлов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.media_storage import media_storage
+        
+        stats = media_storage.get_storage_stats()
+        
+        # Форматируем информация о типах файлов
+        file_types_info = ""
+        for file_type, count in stats.get('file_types', {}).items():
+            file_types_info += f"   • {file_type}: {count} файлов\n"
+        
+        if not file_types_info:
+            file_types_info = "   • Нет файлов\n"
+        
+        text = f"""
+📦 <b>Статистика хранилища медиафайлов</b>
+
+📁 <b>Общая информация:</b>
+   • Всего файлов: {stats.get('total_files', 0)}
+   • Размер хранилища: {stats.get('total_size_mb', 0):.2f} MB
+   • Записей в метаданных: {stats.get('metadata_entries', 0)}
+   • Возраст самого старого файла: {stats.get('oldest_file_days', 0)} дней
+
+📊 <b>Файлы по типам:</b>
+{file_types_info}
+📍 <b>Путь к хранилищу:</b>
+<code>{stats.get('storage_path', 'Неизвестно')}</code>
+
+⚙️ <b>Настройки очистки:</b>
+• Автоматически удаляются файлы старше 180 дней
+• Очистка выполняется каждые 24 часа
+"""
+        
+        # Создаем клавиатуру с кнопками управления
+        keyboard = InlineKeyboardBuilder()
+        keyboard.add(InlineKeyboardButton(
+            text="🧹 Очистить файлы старше 180 дней", 
+            callback_data="storage_cleanup_180"
+        ))
+        keyboard.add(InlineKeyboardButton(
+            text="⚠️ Очистить неиспользуемые 30+ дней", 
+            callback_data="storage_cleanup_30"
+        ))
+        keyboard.add(InlineKeyboardButton(text="🔄 Обновить статистику", callback_data="storage_stats"))
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+        keyboard.adjust(1)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error loading storage stats: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при загрузке статистики хранилища: {str(e)[:200]}",
+            reply_markup=get_back_keyboard("admin_stats")
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "storage_cleanup_180")
+async def storage_cleanup_180(callback: CallbackQuery):
+    """Очистка файлов старше 180 дней"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.media_storage import media_storage
+        
+        await callback.message.edit_text("🧹 Очищаю файлы старше 180 дней...")
+        
+        stats = media_storage.cleanup_old_files(days_old=180)
+        
+        text = f"""
+✅ <b>Очистка завершена!</b>
+
+📊 <b>Результаты:</b>
+   • Удалено файлов: {stats.get('deleted', 0)}
+   • Оставлено файлов: {stats.get('kept', 0)}
+   • Всего записей: {stats.get('total_metadata', 0)}
+
+⚙️ <b>Критерии очистки:</b>
+• Удалены файлы, которые не использовались 180+ дней
+• Метаданные обновлены
+"""
+        
+        keyboard = InlineKeyboardBuilder()
+        keyboard.add(InlineKeyboardButton(text="📊 Обновить статистику", callback_data="storage_stats"))
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+        keyboard.adjust(1)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode="HTML"
+        )
+        
+        logger.log_admin_action(callback.from_user.id, f"cleaned storage (180 days): deleted {stats.get('deleted', 0)} files")
+        
+    except Exception as e:
+        logger.error(f"Error cleaning storage: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при очистке хранилища: {str(e)[:200]}",
+            reply_markup=get_back_keyboard("storage_stats")
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "storage_cleanup_30")
+async def storage_cleanup_30(callback: CallbackQuery):
+    """Очистка неиспользуемых файлов (30+ дней)"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.media_storage import media_storage
+        
+        await callback.message.edit_text("⚠️ Очищаю файлы, неиспользуемые 30+ дней...")
+        
+        # Используем стандартный метод очистки
+        stats = media_storage.cleanup_old_files(days_old=30)
+        
+        text = f"""
+⚠️ <b>Принудительная очистка завершена!</b>
+
+📊 <b>Результаты:</b>
+   • Удалено файлов: {stats.get('deleted', 0)}
+   • Оставлено файлов: {stats.get('kept', 0)}
+
+❗ <b>Внимание:</b>
+• Удалены ВСЕ файлы, которые не использовались 30+ дней
+• Включая файлы, которые могут понадобиться в будущем
+• Используйте осторожно!
+"""
+        
+        keyboard = InlineKeyboardBuilder()
+        keyboard.add(InlineKeyboardButton(text="📊 Обновить статистику", callback_data="storage_stats"))
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+        keyboard.adjust(1)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode="HTML"
+        )
+        
+        logger.log_admin_action(callback.from_user.id, f"force cleaned storage (30 days): deleted {stats.get('deleted', 0)} files")
+        
+    except Exception as e:
+        logger.error(f"Error force cleaning storage: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при принудительной очистке хранилища: {str(e)[:200]}",
+            reply_markup=get_back_keyboard("storage_stats")
         )
     await callback.answer()

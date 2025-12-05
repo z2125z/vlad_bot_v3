@@ -1,14 +1,14 @@
 from aiogram import Bot
-from aiogram.types import Message, InputFile, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter, TelegramNetworkError
 import asyncio
 import config
 from services.logger import logger
 from services.database import db
-from utils.timezone import get_moscow_time, moscow_to_utc
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from services.media_storage import media_storage
+import os
 
 class MailingService:
     def __init__(self, bot: Bot):
@@ -17,7 +17,7 @@ class MailingService:
         # Устанавливаем бота в хранилище медиа
         media_storage.set_bot(bot)
 
-    def _create_keyboard(self, buttons):
+    def _create_keyboard(self, buttons: List[Dict[str, str]]) -> Optional[InlineKeyboardMarkup]:
         """Создание клавиатуры из кнопок рассылки"""
         if not buttons:
             return None
@@ -53,7 +53,7 @@ class MailingService:
             except Exception as e:
                 raise e
 
-    async def _send_media_with_local_storage(self, mailing: Dict[str, Any], user_id: int, keyboard):
+    async def _send_media_with_local_storage(self, mailing: Dict[str, Any], user_id: int, keyboard: Optional[InlineKeyboardMarkup]) -> Optional[Message]:
         """Отправка медиа с использованием локального хранилища"""
         try:
             message = None
@@ -68,80 +68,139 @@ class MailingService:
                 
             elif mailing['message_type'] == "photo":
                 # Используем локальное хранилище
-                photo_file = await media_storage.get_file_input(
-                    mailing['media_file_id'], 
-                    'photo'
-                )
-                message = await self.bot.send_photo(
-                    chat_id=user_id,
-                    photo=photo_file,
-                    caption=mailing['message_text'],
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-                
-            elif mailing['message_type'] == "video":
-                video_file = await media_storage.get_file_input(
-                    mailing['media_file_id'], 
-                    'video'
-                )
-                message = await self.bot.send_video(
-                    chat_id=user_id,
-                    video=video_file,
-                    caption=mailing['message_text'],
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-                
-            elif mailing['message_type'] == "document":
-                # Для документов сохраняем оригинальное имя файла
-                document_file = await media_storage.get_file_input(
-                    mailing['media_file_id'], 
-                    'document'
-                )
-                message = await self.bot.send_document(
-                    chat_id=user_id,
-                    document=document_file,
-                    caption=mailing['message_text'],
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-                
-            elif mailing['message_type'] == "voice":
-                voice_file = await media_storage.get_file_input(
-                    mailing['media_file_id'], 
-                    'voice'
-                )
-                message = await self.bot.send_voice(
-                    chat_id=user_id,
-                    voice=voice_file,
-                    caption=mailing['message_text'],
-                    parse_mode="HTML",
-                    reply_markup=keyboard
-                )
-                
-            elif mailing['message_type'] == "video_note":
-                video_note_file = await media_storage.get_file_input(
-                    mailing['media_file_id'], 
-                    'video_note'
-                )
-                message = await self.bot.send_video_note(
-                    chat_id=user_id,
-                    video_note=video_note_file
-                )
-                # Отправляем текст отдельно, если он есть
-                if mailing['message_text'] and mailing['message_text'].strip():
-                    await self.bot.send_message(
+                try:
+                    photo_file = await media_storage.get_file_input(
+                        mailing['media_file_id'], 
+                        'photo'
+                    )
+                    message = await self.bot.send_photo(
                         chat_id=user_id,
-                        text=mailing['message_text'],
+                        photo=photo_file,
+                        caption=mailing['message_text'],
                         parse_mode="HTML",
                         reply_markup=keyboard
                     )
+                except FileNotFoundError as e:
+                    logger.error(f"Photo file not found: {e}")
+                    # Fallback: отправляем текстовое сообщение
+                    if mailing['message_text']:
+                        message = await self.bot.send_message(
+                            chat_id=user_id,
+                            text=mailing['message_text'],
+                            parse_mode="HTML",
+                            reply_markup=keyboard
+                        )
+                
+            elif mailing['message_type'] == "video":
+                try:
+                    video_file = await media_storage.get_file_input(
+                        mailing['media_file_id'], 
+                        'video'
+                    )
+                    message = await self.bot.send_video(
+                        chat_id=user_id,
+                        video=video_file,
+                        caption=mailing['message_text'],
+                        parse_mode="HTML",
+                        reply_markup=keyboard
+                    )
+                except FileNotFoundError as e:
+                    logger.error(f"Video file not found: {e}")
+                    if mailing['message_text']:
+                        message = await self.bot.send_message(
+                            chat_id=user_id,
+                            text=mailing['message_text'],
+                            parse_mode="HTML",
+                            reply_markup=keyboard
+                        )
+                
+            elif mailing['message_type'] == "document":
+                # Получаем дополнительную информацию о документе
+                original_name = mailing.get('document_original_name')
+                mime_type = mailing.get('document_mime_type')
+                
+                try:
+                    document_file = await media_storage.get_file_input(
+                        mailing['media_file_id'], 
+                        'document',
+                        original_name=original_name,
+                        mime_type=mime_type
+                    )
+                    message = await self.bot.send_document(
+                        chat_id=user_id,
+                        document=document_file,
+                        caption=mailing['message_text'],
+                        parse_mode="HTML",
+                        reply_markup=keyboard
+                    )
+                except FileNotFoundError as e:
+                    logger.error(f"Document file not found: {e}")
+                    if mailing['message_text']:
+                        message = await self.bot.send_message(
+                            chat_id=user_id,
+                            text=mailing['message_text'],
+                            parse_mode="HTML",
+                            reply_markup=keyboard
+                        )
+                
+            elif mailing['message_type'] == "voice":
+                try:
+                    voice_file = await media_storage.get_file_input(
+                        mailing['media_file_id'], 
+                        'voice'
+                    )
+                    message = await self.bot.send_voice(
+                        chat_id=user_id,
+                        voice=voice_file,
+                        caption=mailing['message_text'],
+                        parse_mode="HTML",
+                        reply_markup=keyboard
+                    )
+                except FileNotFoundError as e:
+                    logger.error(f"Voice file not found: {e}")
+                    if mailing['message_text']:
+                        message = await self.bot.send_message(
+                            chat_id=user_id,
+                            text=mailing['message_text'],
+                            parse_mode="HTML",
+                            reply_markup=keyboard
+                        )
+                
+            elif mailing['message_type'] == "video_note":
+                try:
+                    video_note_file = await media_storage.get_file_input(
+                        mailing['media_file_id'], 
+                        'video_note'
+                    )
+                    message = await self.bot.send_video_note(
+                        chat_id=user_id,
+                        video_note=video_note_file
+                    )
+                    # Отправляем текст отдельно, если он есть
+                    if mailing['message_text'] and mailing['message_text'].strip():
+                        try:
+                            await self.bot.send_message(
+                                chat_id=user_id,
+                                text=mailing['message_text'],
+                                parse_mode="HTML",
+                                reply_markup=keyboard
+                            )
+                        except Exception as text_error:
+                            logger.error(f"Error sending text after video note: {text_error}")
+                except FileNotFoundError as e:
+                    logger.error(f"Video note file not found: {e}")
+                    if mailing['message_text']:
+                        message = await self.bot.send_message(
+                            chat_id=user_id,
+                            text=mailing['message_text'],
+                            parse_mode="HTML",
+                            reply_markup=keyboard
+                        )
             
             return message
             
         except Exception as e:
-            logger.error(f"Error sending media with local storage: {e}")
+            logger.error(f"Error sending media with local storage to user {user_id}: {e}")
             raise
 
     async def send_mailing(self, mailing_id: int, user_id: int, target_group: str) -> Tuple[bool, Optional[int]]:
@@ -158,7 +217,7 @@ class MailingService:
                 logger.error(f"Failed to create stats for mailing {mailing_id}, user {user_id}")
                 return False, None
 
-            keyboard = self._create_keyboard(mailing['buttons'])
+            keyboard = self._create_keyboard(mailing.get('buttons', []))
 
             try:
                 message = await self._send_media_with_local_storage(mailing, user_id, keyboard)
@@ -168,7 +227,7 @@ class MailingService:
                     db.update_mailing_stats(stats.id, 
                         sent=True, 
                         delivered=True,
-                        delivered_at=moscow_to_utc(get_moscow_time())
+                        delivered_at=db.get_current_utc_time()
                     )
                     
                     # Обновляем активность пользователя
@@ -189,6 +248,11 @@ class MailingService:
             except TelegramBadRequest as e:
                 # Другие ошибки Telegram
                 logger.error(f"Telegram error sending to {user_id}: {e}")
+                db.update_mailing_stats(stats.id, sent=True, delivered=False)
+                return False, None
+            except TelegramNetworkError as e:
+                # Проблемы с сетью
+                logger.error(f"Network error sending to {user_id}: {e}")
                 db.update_mailing_stats(stats.id, sent=True, delivered=False)
                 return False, None
             except Exception as e:
@@ -221,14 +285,16 @@ class MailingService:
         try:
             mailing = db.get_mailing_by_trigger_word(trigger_word)
             if not mailing:
+                logger.warning(f"No mailing found for trigger word: {trigger_word}")
                 return False, None
 
             # Создаем запись статистики
             stats = db.add_mailing_stats(mailing['id'], user_id, "trigger")
             if not stats:
+                logger.error(f"Failed to create stats for trigger mailing to user {user_id}")
                 return False, None
 
-            keyboard = self._create_keyboard(mailing['buttons'])
+            keyboard = self._create_keyboard(mailing.get('buttons', []))
 
             try:
                 message = await self._send_media_with_local_storage(mailing, user_id, keyboard)
@@ -238,7 +304,7 @@ class MailingService:
                     db.update_mailing_stats(stats.id, 
                         sent=True, 
                         delivered=True,
-                        delivered_at=moscow_to_utc(get_moscow_time())
+                        delivered_at=db.get_current_utc_time()
                     )
                     db.update_user_activity(user_id)
                     return True, message.message_id
@@ -259,17 +325,30 @@ class MailingService:
         """Массовая рассылка по выбранной группе пользователей"""
         try:
             mailing = db.get_mailing(mailing_id)
-            if not mailing or mailing['status'] != "active":
-                logger.error(f"Cannot send mailing {mailing_id} - not found or not active")
+            if not mailing:
+                logger.error(f"Mailing {mailing_id} not found")
+                return False, 0, 0
+                
+            if mailing['status'] != "active":
+                logger.error(f"Cannot send mailing {mailing_id} - status is {mailing['status']}, not active")
                 return False, 0, 0
 
             # Предварительно скачиваем медиафайл (если есть) для ускорения рассылки
-            if mailing['media_file_id']:
+            if mailing.get('media_file_id'):
                 try:
-                    await media_storage.download_and_store(
-                        mailing['media_file_id'], 
-                        mailing['message_type']
-                    )
+                    # Для документов передаем дополнительную информацию
+                    if mailing['message_type'] == 'document':
+                        await media_storage.download_and_store(
+                            mailing['media_file_id'], 
+                            mailing['message_type'],
+                            original_name=mailing.get('document_original_name'),
+                            mime_type=mailing.get('document_mime_type')
+                        )
+                    else:
+                        await media_storage.download_and_store(
+                            mailing['media_file_id'], 
+                            mailing['message_type']
+                        )
                     logger.info(f"Pre-downloaded media for mailing {mailing_id}")
                 except Exception as e:
                     logger.warning(f"Could not pre-download media for mailing {mailing_id}: {e}")
@@ -324,15 +403,19 @@ class MailingService:
                     logger.error(f"Failed to send progress message: {e}")
 
             for index, user in enumerate(users):
-                success, _ = await self.send_mailing(
-                    mailing_id=mailing_id,
-                    user_id=user.user_id,
-                    target_group=target_group
-                )
-                
-                if success:
-                    success_count += 1
-                else:
+                try:
+                    success, _ = await self.send_mailing(
+                        mailing_id=mailing_id,
+                        user_id=user.user_id,
+                        target_group=target_group
+                    )
+                    
+                    if success:
+                        success_count += 1
+                    else:
+                        errors.append(user.user_id)
+                except Exception as e:
+                    logger.error(f"Error processing user {user.user_id}: {e}")
                     errors.append(user.user_id)
                 
                 # Логируем прогресс каждые 10 сообщений
@@ -378,7 +461,9 @@ class MailingService:
                     f"📊 <b>Эффективность:</b> {success_rate:.1f}%"
                 )
                 
-                if errors:
+                if errors and len(errors) <= 10:
+                    final_message += f"\n\n⚠️ <b>Не удалось отправить:</b> {len(errors)} пользователей (первые 10: {', '.join(map(str, errors[:10]))})"
+                elif errors:
                     final_message += f"\n\n⚠️ <b>Не удалось отправить:</b> {len(errors)} пользователей"
                 
                 try:

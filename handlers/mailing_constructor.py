@@ -129,6 +129,7 @@ async def mailing_get_media(message: Message, state: FSMContext):
     
     media_file_id = None
     valid_content = False
+    document_info = None
     
     if media_type == "photo" and message.photo:
         media_file_id = message.photo[-1].file_id
@@ -138,6 +139,12 @@ async def mailing_get_media(message: Message, state: FSMContext):
         valid_content = True
     elif media_type == "document" and message.document:
         media_file_id = message.document.file_id
+        # Сохраняем дополнительную информацию о документе
+        document_info = {
+            'original_name': message.document.file_name,
+            'mime_type': message.document.mime_type,
+            'file_size': message.document.file_size
+        }
         valid_content = True
     elif media_type == "voice" and message.voice:
         media_file_id = message.voice.file_id
@@ -148,6 +155,8 @@ async def mailing_get_media(message: Message, state: FSMContext):
     
     if valid_content and media_file_id:
         await state.update_data(media_file_id=media_file_id)
+        if document_info:
+            await state.update_data(document_info=document_info)
         await state.set_state(MailingConstructor.waiting_for_buttons)
         await mailing_ask_for_buttons(message, state)
     else:
@@ -228,6 +237,9 @@ async def mailing_get_buttons(message: Message, state: FSMContext):
 async def mailing_finalize(update, state: FSMContext):
     data = await state.get_data()
     
+    # Извлекаем информацию о документе
+    document_info = data.get('document_info', {})
+    
     # Создаем рассылку в БД
     mailing = db.create_mailing(
         title=data['title'],
@@ -235,7 +247,10 @@ async def mailing_finalize(update, state: FSMContext):
         message_type=data.get('message_type', 'text'),
         media_file_id=data.get('media_file_id'),
         buttons=data.get('buttons', []),
-        status="draft"
+        status="draft",
+        document_original_name=document_info.get('original_name'),
+        document_mime_type=document_info.get('mime_type'),
+        document_file_size=document_info.get('file_size')
     )
     
     if not mailing:
@@ -547,6 +562,7 @@ async def edit_mailing_media(message: Message, state: FSMContext):
     
     media_file_id = None
     valid_content = False
+    document_info = None
     
     if media_type == "photo" and message.photo:
         media_file_id = message.photo[-1].file_id
@@ -556,6 +572,12 @@ async def edit_mailing_media(message: Message, state: FSMContext):
         valid_content = True
     elif media_type == "document" and message.document:
         media_file_id = message.document.file_id
+        # Сохраняем дополнительную информацию о документе
+        document_info = {
+            'original_name': message.document.file_name,
+            'mime_type': message.document.mime_type,
+            'file_size': message.document.file_size
+        }
         valid_content = True
     elif media_type == "voice" and message.voice:
         media_file_id = message.voice.file_id
@@ -565,7 +587,18 @@ async def edit_mailing_media(message: Message, state: FSMContext):
         valid_content = True
     
     if valid_content and media_file_id:
-        db.update_mailing(mailing_id, message_type=media_type, media_file_id=media_file_id)
+        update_data = {
+            'message_type': media_type,
+            'media_file_id': media_file_id
+        }
+        if document_info:
+            update_data.update({
+                'document_original_name': document_info['original_name'],
+                'document_mime_type': document_info['mime_type'],
+                'document_file_size': document_info['file_size']
+            })
+        
+        db.update_mailing(mailing_id, **update_data)
         await state.set_state(MailingConstructor.editing_buttons)
         await edit_mailing_ask_for_buttons(message, state)
     else:

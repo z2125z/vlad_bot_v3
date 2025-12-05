@@ -1,7 +1,8 @@
-from aiogram.types import InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import sys
 import os
+import html
 
 # Добавляем путь для импорта
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,7 +44,7 @@ except ImportError as e:
 
 import config
 
-def get_admin_main_keyboard():
+def get_admin_main_keyboard() -> InlineKeyboardMarkup:
     """Главное меню админ-панели"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
@@ -53,7 +54,7 @@ def get_admin_main_keyboard():
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_stats_keyboard():
+def get_stats_keyboard() -> InlineKeyboardMarkup:
     """Меню статистики с кнопкой экспорта и логов"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="📈 Общая статистика", callback_data="stats_overview"))
@@ -66,7 +67,7 @@ def get_stats_keyboard():
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_mailings_keyboard():
+def get_mailings_keyboard() -> InlineKeyboardMarkup:
     """Меню управления рассылками"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="✉️ Создать рассылку", callback_data="create_mailing"))
@@ -78,7 +79,7 @@ def get_mailings_keyboard():
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_users_keyboard():
+def get_users_keyboard() -> InlineKeyboardMarkup:
     """Меню управления пользователями"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="👥 Список пользователей", callback_data="users_list"))
@@ -88,7 +89,7 @@ def get_users_keyboard():
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_mailing_actions_keyboard(mailing_id: int, status: str):
+def get_mailing_actions_keyboard(mailing_id: int, status: str) -> InlineKeyboardMarkup:
     """Действия для конкретной рассылки"""
     keyboard = InlineKeyboardBuilder()
     
@@ -119,7 +120,7 @@ def get_mailing_actions_keyboard(mailing_id: int, status: str):
     keyboard.adjust(2)
     return keyboard.as_markup()
 
-def get_mailing_type_keyboard():
+def get_mailing_type_keyboard() -> InlineKeyboardMarkup:
     """Выбор типа рассылки"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="📝 Текст", callback_data="mailing_type_text"))
@@ -132,7 +133,7 @@ def get_mailing_type_keyboard():
     keyboard.adjust(2)
     return keyboard.as_markup()
 
-def get_mailing_buttons_keyboard():
+def get_mailing_buttons_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для добавления кнопок к рассылке"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="➕ Добавить кнопки", callback_data="mailing_add_buttons"))
@@ -140,7 +141,7 @@ def get_mailing_buttons_keyboard():
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_target_groups_keyboard(mailing_id: int):
+def get_target_groups_keyboard(mailing_id: int) -> InlineKeyboardMarkup:
     """Выбор целевой группы для рассылки"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(
@@ -159,11 +160,11 @@ def get_target_groups_keyboard(mailing_id: int):
         text="🆕 Новые пользователи (30 дней)", 
         callback_data=f"target:new_month:{mailing_id}"
     ))
-    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data=f"send_mailing_{mailing_id}"))
+    keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data=f"select_mailing_{mailing_id}"))
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_pagination_keyboard(current_page: int, total_pages: int, callback_prefix: str):
+def get_pagination_keyboard(current_page: int, total_pages: int, callback_prefix: str) -> InlineKeyboardMarkup:
     """Клавиатура пагинации"""
     keyboard = InlineKeyboardBuilder()
     
@@ -201,17 +202,18 @@ def get_target_group_name(target_group: str) -> str:
         "all": "Все пользователи",
         "active": "Активные сегодня", 
         "new_week": "Новые пользователи (7 дней)",
-        "new_month": "Новые пользователи (30 дней)"
+        "new_month": "Новые пользователи (30 дней)",
+        "trigger": "По кодовому слову"
     }
     return names.get(target_group, "Неизвестная группа")
 
-def get_back_keyboard(target: str = "admin_main"):
+def get_back_keyboard(target: str = "admin_main") -> InlineKeyboardMarkup:
     """Универсальная кнопка назад"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data=target))
     return keyboard.as_markup()
 
-def get_mailing_preview_keyboard(mailing_id: int):
+def get_mailing_preview_keyboard(mailing_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для превью рассылки"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="🚀 Отправить сейчас", callback_data=f"send_now_{mailing_id}"))
@@ -221,7 +223,7 @@ def get_mailing_preview_keyboard(mailing_id: int):
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_skip_edit_keyboard(mailing_id: int):
+def get_skip_edit_keyboard(mailing_id: int) -> InlineKeyboardMarkup:
     """Клавиатура для пропуска редактирования медиа"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="⏭️ Пропустить", callback_data=f"skip_edit_{mailing_id}"))
@@ -229,7 +231,7 @@ def get_skip_edit_keyboard(mailing_id: int):
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_skip_trigger_keyboard():
+def get_skip_trigger_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для пропуска кодового слова"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="⏭️ Пропустить", callback_data="skip_trigger"))
@@ -237,7 +239,7 @@ def get_skip_trigger_keyboard():
     keyboard.adjust(1)
     return keyboard.as_markup()
 
-def get_logs_keyboard():
+def get_logs_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для выбора логов"""
     keyboard = InlineKeyboardBuilder()
     keyboard.add(InlineKeyboardButton(text="📋 Текущий месяц", callback_data="logs_current"))
@@ -257,20 +259,31 @@ def _get_db():
         try:
             from services.database import db as database
             _db = database
-        except ImportError:
+        except ImportError as e:
+            print(f"Warning: Cannot import database module: {e}")
             # Создаем заглушку для тестирования
             class MockDB:
                 def get_user_count(self): return 0
                 def get_active_users_count_today(self): return 0
+                def get_active_users_count_week(self): return 0
                 def get_mailings_by_status(self, status): return []
                 def get_all_mailings(self): return []
                 def get_bulk_mailing_stats(self, ids): return {}
                 def get_mailing_stats(self, id): return {'total_sent': 0, 'delivered': 0, 'read': 0, 'success_rate': 0}
                 def get_active_trigger_mailings(self): return []
+                def get_new_users_count(self, days): return 0
+                def get_new_users_count_week(self): return 0
+                def get_new_users_count_month(self): return 0
             _db = MockDB()
     return _db
 
-def format_stats_overview():
+def _safe_html_escape(text: str) -> str:
+    """Безопасное экранирование HTML"""
+    if not text:
+        return ""
+    return html.escape(text)
+
+def format_stats_overview() -> str:
     """Форматирование общей статистики с московским временем"""
     try:
         db = _get_db()
@@ -283,16 +296,22 @@ def format_stats_overview():
         
         # Статистика по триггерным рассылкам
         trigger_stats = []
-        trigger_mailing_ids = [m['id'] for m in trigger_mailings]
+        trigger_mailing_ids = [m['id'] for m in trigger_mailings if m]
         
         if trigger_mailing_ids:
             stats_dict = db.get_bulk_mailing_stats(trigger_mailing_ids)
             for mailing in trigger_mailings:
-                stats = stats_dict.get(mailing['id'], {'delivered': 0})
-                if mailing.get('trigger_word'):
-                    trigger_stats.append(f"   • {mailing['trigger_word']}: {stats['delivered']} отправок")
+                if mailing and mailing.get('trigger_word'):
+                    stats = stats_dict.get(mailing['id'], {'delivered': 0})
+                    trigger_word = _safe_html_escape(mailing['trigger_word'])
+                    trigger_stats.append(f"   • {trigger_word}: {stats['delivered']} отправок")
         
         trigger_info = "\n".join(trigger_stats) if trigger_stats else "   • Нет активных рассылок"
+        
+        # Расчет процентов
+        today_percent = 0
+        if users_count > 0:
+            today_percent = (active_today / users_count) * 100
         
         return f"""
 📊 <b>Общая статистика</b>
@@ -300,7 +319,7 @@ def format_stats_overview():
 👥 <b>Пользователи:</b>
    • Всего: <b>{users_count}</b>
    • Активных сегодня: <b>{active_today}</b>
-   • Активность: <b>{(active_today/users_count*100 if users_count > 0 else 0):.1f}%</b>
+   • Активность: <b>{today_percent:.1f}%</b>
 
 📨 <b>Рассылки:</b>
    • Всего: <b>{all_mailings}</b>
@@ -313,9 +332,9 @@ def format_stats_overview():
 ⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
-        return f"❌ Ошибка при загрузке статистики: {str(e)}"
+        return f"❌ Ошибка при загрузке статистики: {_safe_html_escape(str(e))}"
 
-def format_users_stats():
+def format_users_stats() -> str:
     """Форматирование статистики пользователей"""
     try:
         db = _get_db()
@@ -326,8 +345,12 @@ def format_users_stats():
         new_today = db.get_new_users_count(days=1)
         new_week = db.get_new_users_count_week()
         
-        today_rate = (active_today / users_count * 100) if users_count > 0 else 0
-        week_rate = (active_week / users_count * 100) if users_count > 0 else 0
+        # Расчет процентов
+        today_rate = 0
+        week_rate = 0
+        if users_count > 0:
+            today_rate = (active_today / users_count) * 100
+            week_rate = (active_week / users_count) * 100
         
         return f"""
 👥 <b>Статистика пользователей</b>
@@ -346,9 +369,9 @@ def format_users_stats():
 ⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
-        return f"❌ Ошибка при загрузке статистики пользователей: {str(e)}"
+        return f"❌ Ошибка при загрузке статистики пользователей: {_safe_html_escape(str(e))}"
 
-def format_mailings_stats():
+def format_mailings_stats() -> str:
     """Форматирование статистики рассылок с московским временем"""
     try:
         db = _get_db()
@@ -359,7 +382,7 @@ def format_mailings_stats():
         archived_mailings = db.get_mailings_by_status('archived')
         trigger_mailings = db.get_active_trigger_mailings()
         
-        mailing_ids = [m['id'] for m in all_mailings]
+        mailing_ids = [m['id'] for m in all_mailings if m]
         stats_dict = db.get_bulk_mailing_stats(mailing_ids)
         
         total_sent = 0
@@ -371,8 +394,12 @@ def format_mailings_stats():
             total_delivered += stats['delivered']
             total_read += stats['read']
         
-        overall_success_rate = (total_delivered / total_sent * 100) if total_sent > 0 else 0
-        overall_read_rate = (total_read / total_sent * 100) if total_sent > 0 else 0
+        # Расчет процентов
+        overall_success_rate = 0
+        overall_read_rate = 0
+        if total_sent > 0:
+            overall_success_rate = (total_delivered / total_sent) * 100
+            overall_read_rate = (total_read / total_sent) * 100
         
         return f"""
 📨 <b>Статистика рассылок</b>
@@ -394,9 +421,9 @@ def format_mailings_stats():
 ⏱️ <b>Обновлено:</b> {format_moscow_time()}
 """
     except Exception as e:
-        return f"❌ Ошибка при загрузке статистики рассылок: {str(e)}"
+        return f"❌ Ошибка при загрузке статистики рассылок: {_safe_html_escape(str(e))}"
 
-def format_mailing_preview(mailing):
+def format_mailing_preview(mailing: dict) -> str:
     """Форматирование превью рассылки с московским временем"""
     try:
         db = _get_db()
@@ -413,13 +440,15 @@ def format_mailing_preview(mailing):
         status_texts = {
             'draft': '📝 Черновик',
             'active': '✅ Активна',
-            'archived': '📁 В архиве'
+            'archived': '📁 В архиве',
+            'deleted': '🗑️ Удалена'
         }
         
         stats = db.get_mailing_stats(mailing['id'])
         
-        message_text = mailing['message_text']
-        preview_text = message_text[:200] + '...' if len(message_text) > 200 else message_text
+        # Безопасное экранирование текста
+        message_text = mailing.get('message_text', '')
+        preview_text = _safe_html_escape(message_text[:200] + '...' if len(message_text) > 200 else message_text)
         
         # Безопасная работа с датами
         created_at = format_moscow_time(mailing.get('created_at')) if mailing.get('created_at') else 'неизвестно'
@@ -434,19 +463,23 @@ def format_mailing_preview(mailing):
         # Информация о кодовом слове
         trigger_info = ""
         if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-            trigger_info = f"🔤 <b>Кодовое слово:</b> {mailing['trigger_word']}\n"
+            trigger_word = _safe_html_escape(mailing['trigger_word'])
+            trigger_info = f"🔤 <b>Кодовое слово:</b> {trigger_word}\n"
+        
+        # Эмодзи типа сообщения
+        message_type_emoji = type_emojis.get(mailing.get('message_type', 'text'), '📝')
         
         return f"""
-{type_emojis.get(mailing['message_type'], '📝')} <b>Просмотр рассылки</b>
+{message_type_emoji} <b>Просмотр рассылки</b>
 
-📋 <b>Название:</b> {mailing['title']}
+📋 <b>Название:</b> {_safe_html_escape(mailing.get('title', 'Без названия'))}
 {trigger_info}{buttons_info}
 📄 <b>Текст:</b> {preview_text}
-🎬 <b>Тип:</b> {mailing['message_type']}
-📊 <b>Статус:</b> {status_texts.get(mailing['status'], mailing['status'])}
+🎬 <b>Тип:</b> {mailing.get('message_type', 'text')}
+📊 <b>Статус:</b> {status_texts.get(mailing.get('status', 'draft'), mailing.get('status', 'неизвестно'))}
 📈 <b>Статистика:</b> Отправлено: {stats['total_sent']}, Успешно: {stats['delivered']}
 ⏰ <b>Создана:</b> {created_at}
 🔄 <b>Обновлена:</b> {updated_at}
 """
     except Exception as e:
-        return f"❌ Ошибка при форматировании превью рассылки: {str(e)}"
+        return f"❌ Ошибка при форматировании превью рассылки: {_safe_html_escape(str(e))}"

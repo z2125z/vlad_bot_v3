@@ -10,12 +10,16 @@ from utils.helpers import (
     get_users_keyboard,
     get_target_groups_keyboard,
     get_back_keyboard,
-    get_logs_keyboard
+    get_logs_keyboard,
+    get_pagination_keyboard,
+    get_mailing_actions_keyboard
 )
 import config
 import os
 from services.logger import logger
 from datetime import datetime, timedelta
+import asyncio
+import math
 
 router = Router()
 
@@ -35,6 +39,7 @@ async def cmd_admin(message: Message):
         reply_markup=get_admin_main_keyboard(),
         parse_mode="HTML"
     )
+    logger.log_admin_action(message.from_user.id, "opened admin panel")
 
 # 📊 РАЗДЕЛ СТАТИСТИКИ
 @router.callback_query(F.data == "admin_stats")
@@ -49,6 +54,7 @@ async def admin_stats(callback: CallbackQuery):
         reply_markup=get_stats_keyboard(),
         parse_mode="HTML"
     )
+    await callback.answer()
 
 # Общая статистика
 @router.callback_query(F.data == "stats_overview")
@@ -66,10 +72,12 @@ async def stats_overview(callback: CallbackQuery):
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading stats overview: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке статистики: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
+    await callback.answer()
 
 # Статистика пользователей
 @router.callback_query(F.data == "stats_users")
@@ -87,10 +95,12 @@ async def stats_users(callback: CallbackQuery):
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading user stats: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке статистики пользователей: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
+    await callback.answer()
 
 # Статистика рассылок
 @router.callback_query(F.data == "stats_mailings")
@@ -108,10 +118,12 @@ async def stats_mailings(callback: CallbackQuery):
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading mailing stats: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке статистики рассылок: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
+    await callback.answer()
 
 # 📨 РАЗДЕЛ РАССЫЛОК
 @router.callback_query(F.data == "admin_mailings")
@@ -126,9 +138,10 @@ async def admin_mailings(callback: CallbackQuery):
         reply_markup=get_mailings_keyboard(),
         parse_mode="HTML"
     )
+    await callback.answer()
 
-# Активные рассылки
-@router.callback_query(F.data == "mailings_active")
+# Активные рассылки с пагинацией
+@router.callback_query(F.data.startswith("mailings_active_"))
 async def mailings_active(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
@@ -137,6 +150,14 @@ async def mailings_active(callback: CallbackQuery):
     try:
         from services.database import db
         
+        # Получаем номер страницы из callback_data
+        page_str = callback.data.replace("mailings_active_", "")
+        try:
+            page = int(page_str)
+        except ValueError:
+            page = 1
+            
+        # Получаем все активные рассылки
         mailings = db.get_mailings_by_status('active')
         
         if not mailings:
@@ -146,39 +167,79 @@ async def mailings_active(callback: CallbackQuery):
             )
             return
         
-        text = "✅ <b>Активные рассылки:</b>\n\n"
-        keyboard = InlineKeyboardBuilder()
+        # Настройки пагинации
+        items_per_page = 10
+        total_items = len(mailings)
+        total_pages = max(1, math.ceil(total_items / items_per_page))
+        page = max(1, min(page, total_pages))
         
-        for mailing in mailings:
+        # Вычисляем диапазон для текущей страницы
+        start_idx = (page - 1) * items_per_page
+        end_idx = start_idx + items_per_page
+        current_mailings = mailings[start_idx:end_idx]
+        
+        text = f"✅ <b>Активные рассылки (страница {page}/{total_pages}):</b>\n\n"
+        
+        for mailing in current_mailings:
             stats = db.get_mailing_stats(mailing['id'])
             created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
-            text += f"📨 {mailing['title']}\n"
+            
+            # Добавляем информацию о кодовом слове, если есть
+            trigger_word_info = ""
+            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+                trigger_word_info = f" 🔤{mailing['trigger_word']}"
+            
+            text += f"📨 {mailing['title']}{trigger_word_info}\n"
             text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
             text += f"   🕐 Создана: {created_at}\n"
             text += f"   [ID: {mailing['id']}]\n\n"
+        
+        # Создаем клавиатуру с пагинацией
+        keyboard = InlineKeyboardBuilder()
+        
+        for mailing in current_mailings:
+            button_text = f"📝 {mailing['title'][:20]}..."
+            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+                button_text = f"🔤 {mailing['trigger_word']}"
             
-            # Добавляем кнопку для управления каждой рассылкой
             keyboard.add(InlineKeyboardButton(
-                text=f"📝 {mailing['title'][:20]}...",
+                text=button_text,
                 callback_data=f"view_mailing_{mailing['id']}"
             ))
         
-        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_mailings"))
         keyboard.adjust(1)
+        
+        # Добавляем пагинацию
+        pagination_keyboard = get_pagination_keyboard(page, total_pages, "mailings_active")
+        
+        # Объединяем клавиатуры
+        combined_keyboard = InlineKeyboardBuilder()
+        for button in keyboard.export():
+            combined_keyboard.add(button)
+        
+        for button in pagination_keyboard.inline_keyboard[0]:
+            combined_keyboard.add(InlineKeyboardButton(
+                text=button.text,
+                callback_data=button.callback_data
+            ))
+        
+        combined_keyboard.adjust(1, 3)
         
         await callback.message.edit_text(
             text,
-            reply_markup=keyboard.as_markup(),
+            reply_markup=combined_keyboard.as_markup(),
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading active mailings: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке активных рассылок: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
-# Черновики
-@router.callback_query(F.data == "mailings_drafts")
+# Черновики с пагинацией
+@router.callback_query(F.data.startswith("mailings_drafts_"))
 async def mailings_drafts(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
@@ -187,6 +248,13 @@ async def mailings_drafts(callback: CallbackQuery):
     try:
         from services.database import db
         
+        # Получаем номер страницы из callback_data
+        page_str = callback.data.replace("mailings_drafts_", "")
+        try:
+            page = int(page_str)
+        except ValueError:
+            page = 1
+            
         mailings = db.get_mailings_by_status('draft')
         
         if not mailings:
@@ -196,37 +264,77 @@ async def mailings_drafts(callback: CallbackQuery):
             )
             return
         
-        text = "📝 <b>Черновики рассылок:</b>\n\n"
-        keyboard = InlineKeyboardBuilder()
+        # Настройки пагинации
+        items_per_page = 10
+        total_items = len(mailings)
+        total_pages = max(1, math.ceil(total_items / items_per_page))
+        page = max(1, min(page, total_pages))
         
-        for mailing in mailings:
+        # Вычисляем диапазон для текущей страницы
+        start_idx = (page - 1) * items_per_page
+        end_idx = start_idx + items_per_page
+        current_mailings = mailings[start_idx:end_idx]
+        
+        text = f"📝 <b>Черновики рассылок (страница {page}/{total_pages}):</b>\n\n"
+        
+        for mailing in current_mailings:
             created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
-            text += f"📄 {mailing['title']}\n"
+            
+            # Добавляем информация о кодовом слове, если есть
+            trigger_word_info = ""
+            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+                trigger_word_info = f" 🔤{mailing['trigger_word']}"
+            
+            text += f"📄 {mailing['title']}{trigger_word_info}\n"
             text += f"   🕐 Создан: {created_at}\n"
             text += f"   [ID: {mailing['id']}]\n\n"
+        
+        # Создаем клавиатуру с пагинацией
+        keyboard = InlineKeyboardBuilder()
+        
+        for mailing in current_mailings:
+            button_text = f"📝 {mailing['title'][:20]}..."
+            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+                button_text = f"🔤 {mailing['trigger_word']}"
             
-            # Добавляем кнопку для управления каждой рассылкой
             keyboard.add(InlineKeyboardButton(
-                text=f"📝 {mailing['title'][:20]}...",
+                text=button_text,
                 callback_data=f"view_mailing_{mailing['id']}"
             ))
         
-        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_mailings"))
         keyboard.adjust(1)
+        
+        # Добавляем пагинацию
+        pagination_keyboard = get_pagination_keyboard(page, total_pages, "mailings_drafts")
+        
+        # Объединяем клавиатуры
+        combined_keyboard = InlineKeyboardBuilder()
+        for button in keyboard.export():
+            combined_keyboard.add(button)
+        
+        for button in pagination_keyboard.inline_keyboard[0]:
+            combined_keyboard.add(InlineKeyboardButton(
+                text=button.text,
+                callback_data=button.callback_data
+            ))
+        
+        combined_keyboard.adjust(1, 3)
         
         await callback.message.edit_text(
             text,
-            reply_markup=keyboard.as_markup(),
+            reply_markup=combined_keyboard.as_markup(),
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading draft mailings: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке черновиков: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
-# Архив рассылок
-@router.callback_query(F.data == "mailings_archive")
+# Архив рассылок с пагинацией
+@router.callback_query(F.data.startswith("mailings_archive_"))
 async def mailings_archive(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
@@ -235,6 +343,13 @@ async def mailings_archive(callback: CallbackQuery):
     try:
         from services.database import db
         
+        # Получаем номер страницы из callback_data
+        page_str = callback.data.replace("mailings_archive_", "")
+        try:
+            page = int(page_str)
+        except ValueError:
+            page = 1
+            
         mailings = db.get_mailings_by_status('archived')
         
         if not mailings:
@@ -244,37 +359,77 @@ async def mailings_archive(callback: CallbackQuery):
             )
             return
         
-        text = "📁 <b>Архив рассылок:</b>\n\n"
-        keyboard = InlineKeyboardBuilder()
+        # Настройки пагинации
+        items_per_page = 10
+        total_items = len(mailings)
+        total_pages = max(1, math.ceil(total_items / items_per_page))
+        page = max(1, min(page, total_pages))
         
-        for mailing in mailings:
+        # Вычисляем диапазон для текущей страницы
+        start_idx = (page - 1) * items_per_page
+        end_idx = start_idx + items_per_page
+        current_mailings = mailings[start_idx:end_idx]
+        
+        text = f"📁 <b>Архив рассылок (страница {page}/{total_pages}):</b>\n\n"
+        
+        for mailing in current_mailings:
             stats = db.get_mailing_stats(mailing['id'])
             created_at = mailing['created_at'].strftime('%d.%m.%Y') if mailing['created_at'] else 'неизвестно'
-            text += f"📨 {mailing['title']}\n"
+            
+            # Добавляем информация о кодовом слове, если есть
+            trigger_word_info = ""
+            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+                trigger_word_info = f" 🔤{mailing['trigger_word']}"
+            
+            text += f"📨 {mailing['title']}{trigger_word_info}\n"
             text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
             text += f"   🕐 Создана: {created_at}\n"
             text += f"   [ID: {mailing['id']}]\n\n"
+        
+        # Создаем клавиатуру с пагинацией
+        keyboard = InlineKeyboardBuilder()
+        
+        for mailing in current_mailings:
+            button_text = f"📝 {mailing['title'][:20]}..."
+            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+                button_text = f"🔤 {mailing['trigger_word']}"
             
-            # Добавляем кнопку для управления каждой рассылкой
             keyboard.add(InlineKeyboardButton(
-                text=f"📝 {mailing['title'][:20]}...",
+                text=button_text,
                 callback_data=f"view_mailing_{mailing['id']}"
             ))
         
-        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_mailings"))
         keyboard.adjust(1)
+        
+        # Добавляем пагинацию
+        pagination_keyboard = get_pagination_keyboard(page, total_pages, "mailings_archive")
+        
+        # Объединяем клавиатуры
+        combined_keyboard = InlineKeyboardBuilder()
+        for button in keyboard.export():
+            combined_keyboard.add(button)
+        
+        for button in pagination_keyboard.inline_keyboard[0]:
+            combined_keyboard.add(InlineKeyboardButton(
+                text=button.text,
+                callback_data=button.callback_data
+            ))
+        
+        combined_keyboard.adjust(1, 3)
         
         await callback.message.edit_text(
             text,
-            reply_markup=keyboard.as_markup(),
+            reply_markup=combined_keyboard.as_markup(),
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading archived mailings: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке архива: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
-        
+    await callback.answer()
+
 # Меню отправки рассылки
 @router.callback_query(F.data == "mailings_send")
 async def mailings_send(callback: CallbackQuery):
@@ -298,8 +453,13 @@ async def mailings_send(callback: CallbackQuery):
         keyboard = InlineKeyboardBuilder()
         
         for mailing in active_mailings:
+            # Добавляем иконку кодового слова к названию
+            mailing_title = mailing['title']
+            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+                mailing_title = f"🔤 {mailing['trigger_word']} ({mailing['title'][:15]}...)"
+            
             keyboard.add(InlineKeyboardButton(
-                text=f"📨 {mailing['title']}",
+                text=f"📨 {mailing_title}",
                 callback_data=f"select_mailing_{mailing['id']}"
             ))
         
@@ -312,10 +472,12 @@ async def mailings_send(callback: CallbackQuery):
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading mailings for sending: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке рассылок: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
 # Выбор целевой группы
 @router.callback_query(F.data.startswith("select_mailing_"))
@@ -339,10 +501,16 @@ async def select_mailing_target(callback: CallbackQuery):
         new_week = db.get_new_users_count_week()
         new_month = db.get_new_users_count_month()
         
+        # Добавляем информация о кодовом слове
+        trigger_info = ""
+        if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+            stats = db.get_mailing_stats(mailing_id)
+            trigger_info = f"\n🔤 <b>Кодовое слово:</b> {mailing['trigger_word']}\n📊 <b>Отправок:</b> {stats['delivered']}"
+        
         await callback.message.edit_text(
             f"🎯 <b>Выбор целевой группы</b>\n\n"
-            f"📨 Рассылка: <b>{mailing['title']}</b>\n\n"
-            f"👥 Доступные группы:\n"
+            f"📨 <b>Рассылка:</b> {mailing['title']}{trigger_info}\n\n"
+            f"👥 <b>Доступные группы:</b>\n"
             f"   • Все пользователи: {users_count} чел.\n"
             f"   • Активные сегодня: {active_today} чел.\n"
             f"   • Новые пользователи (7 дней): {new_week} чел.\n"
@@ -350,13 +518,16 @@ async def select_mailing_target(callback: CallbackQuery):
             reply_markup=get_target_groups_keyboard(mailing_id),
             parse_mode="HTML"
         )
+        logger.log_admin_action(callback.from_user.id, f"selected mailing {mailing_id} for sending")
     except Exception as e:
+        logger.error(f"Error selecting mailing: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при выборе рассылки: {str(e)}",
             reply_markup=get_back_keyboard("mailings_send")
         )
+    await callback.answer()
 
-# Запуск рассылки (новый обработчик с правильным форматом)
+# Запуск рассылки - ВАЖНОЕ ИСПРАВЛЕНИЕ
 @router.callback_query(F.data.startswith("target:"))
 async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
@@ -401,17 +572,21 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot):
                 parse_mode="HTML",
                 reply_markup=get_back_keyboard("admin_mailings")
             )
+            logger.log_admin_action(callback.from_user.id, 
+                                  f"completed mailing {mailing_id} to {target_group}: {success_count}/{total_count}")
         else:
             await callback.message.edit_text(
                 "❌ Ошибка при рассылке",
                 reply_markup=get_back_keyboard("admin_mailings")
             )
+            logger.error(f"Failed to send mailing {mailing_id} to {target_group}")
     except Exception as e:
         logger.error(f"Error starting mailing broadcast: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при запуске рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
 # 👥 РАЗДЕЛ ПОЛЬЗОВАТЕЛЕЙ
 @router.callback_query(F.data == "admin_users")
@@ -426,6 +601,7 @@ async def admin_users(callback: CallbackQuery):
         reply_markup=get_users_keyboard(),
         parse_mode="HTML"
     )
+    await callback.answer()
 
 # Список пользователей
 @router.callback_query(F.data == "users_list")
@@ -437,7 +613,7 @@ async def users_list(callback: CallbackQuery):
     try:
         from services.database import db
         
-        users = db.get_all_users()[:50]  # Ограничим показ 50 пользователями
+        users = db.get_all_users(limit=50)
         
         if not users:
             await callback.message.edit_text(
@@ -447,10 +623,11 @@ async def users_list(callback: CallbackQuery):
             return
         
         text = "👥 <b>Последние пользователи:</b>\n\n"
-        for user in users[:10]:  # Покажем первых 10
+        for user in users[:10]:
             status = "🟢" if user.is_active else "🔴"
+            username = f"@{user.username}" if user.username else "без username"
             text += f"{status} {user.full_name or 'Без имени'}\n"
-            text += f"   👤 @{user.username or 'без username'}\n"
+            text += f"   👤 {username}\n"
             text += f"   🆔 ID: {user.user_id}\n"
             text += f"   🕐 Регистрация: {user.joined_at.strftime('%d.%m.%Y')}\n\n"
         
@@ -463,10 +640,12 @@ async def users_list(callback: CallbackQuery):
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading users list: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке пользователей: {str(e)}",
             reply_markup=get_back_keyboard("admin_users")
         )
+    await callback.answer()
 
 # Активные сегодня
 @router.callback_query(F.data == "users_active_today")
@@ -478,7 +657,7 @@ async def users_active_today(callback: CallbackQuery):
     try:
         from services.database import db
         
-        users = db.get_active_users_today()[:20]  # Ограничим показ
+        users = db.get_active_users_today()
         
         if not users:
             await callback.message.edit_text(
@@ -488,7 +667,7 @@ async def users_active_today(callback: CallbackQuery):
             return
         
         text = "📅 <b>Активные пользователи сегодня:</b>\n\n"
-        for user in users[:10]:  # Покажем первых 10
+        for user in users[:10]:
             text += f"🟢 {user.full_name or 'Без имени'}\n"
             text += f"   👤 @{user.username or 'без username'}\n"
             text += f"   ⏰ Активность: {user.last_activity.strftime('%H:%M')}\n\n"
@@ -502,10 +681,12 @@ async def users_active_today(callback: CallbackQuery):
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading active users: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке активных пользователей: {str(e)}",
             reply_markup=get_back_keyboard("admin_users")
         )
+    await callback.answer()
 
 # Аналитика активности
 @router.callback_query(F.data == "users_analytics")
@@ -553,10 +734,12 @@ async def users_analytics(callback: CallbackQuery):
             parse_mode="HTML"
         )
     except Exception as e:
+        logger.error(f"Error loading user analytics: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке аналитики: {str(e)}",
             reply_markup=get_back_keyboard("admin_users")
         )
+    await callback.answer()
 
 # Главное меню
 @router.callback_query(F.data == "admin_main")
@@ -568,8 +751,9 @@ async def admin_main(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_admin_main_keyboard(),
         parse_mode="HTML"
     )
+    await callback.answer()
 
-# Добавляем новый обработчик для экспорта в Excel
+# Экспорт в Excel
 @router.callback_query(F.data == "export_excel")
 async def export_to_excel(callback: CallbackQuery, bot: Bot):
     if not is_admin(callback.from_user.id):
@@ -605,11 +789,14 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
             parse_mode="HTML"
         )
         
-        # Удаляем временный файл после отправки
+        # Удаляем временный файл после успешной отправки
         try:
+            # Ждем немного перед удалением
+            await asyncio.sleep(5)
             os.remove(filepath)
-        except:
-            pass
+            logger.debug(f"Removed temporary export file: {filepath}")
+        except Exception as e:
+            logger.warning(f"Could not remove temp file {filepath}: {e}")
             
         # Очищаем старые экспорты
         exporter.cleanup_old_exports()
@@ -620,11 +807,15 @@ async def export_to_excel(callback: CallbackQuery, bot: Bot):
             reply_markup=get_back_keyboard("admin_stats")
         )
         
+        logger.log_admin_action(callback.from_user.id, "exported Excel report")
+        
     except Exception as e:
+        logger.error(f"Error generating Excel report: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при генерации отчета: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
+    await callback.answer()
 
 # Просмотр конкретной рассылки
 @router.callback_query(F.data.startswith("view_mailing_"))
@@ -650,12 +841,13 @@ async def view_mailing(callback: CallbackQuery):
             parse_mode="HTML",
             reply_markup=get_mailing_actions_keyboard(mailing_id, mailing['status'])
         )
-        await callback.answer()
     except Exception as e:
+        logger.error(f"Error viewing mailing {mailing_id}: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при загрузке рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
 # Архивирование рассылки
 @router.callback_query(F.data.startswith("archive_mailing_"))
@@ -671,15 +863,18 @@ async def archive_mailing(callback: CallbackQuery):
         db.change_mailing_status(mailing_id, "archived")
         
         await callback.answer("✅ Рассылка перемещена в архив")
-        await callback.message.edit_text(
+        await callback.message.answer(
             "✅ Рассылка перемещена в архив",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+        logger.log_admin_action(callback.from_user.id, f"archived mailing {mailing_id}")
     except Exception as e:
+        logger.error(f"Error archiving mailing {mailing_id}: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при архивировании рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
 # Активация рассылки
 @router.callback_query(F.data.startswith("activate_mailing_"))
@@ -695,15 +890,18 @@ async def activate_mailing(callback: CallbackQuery):
         db.change_mailing_status(mailing_id, "active")
         
         await callback.answer("✅ Рассылка активирована")
-        await callback.message.edit_text(
+        await callback.message.answer(
             "✅ Рассылка активирована и готова к отправке",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+        logger.log_admin_action(callback.from_user.id, f"activated mailing {mailing_id}")
     except Exception as e:
+        logger.error(f"Error activating mailing {mailing_id}: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при активации рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
 # Удаление рассылки
 @router.callback_query(F.data.startswith("delete_mailing_"))
@@ -719,15 +917,18 @@ async def delete_mailing(callback: CallbackQuery):
         db.change_mailing_status(mailing_id, "deleted")
         
         await callback.answer("✅ Рассылка удалена")
-        await callback.message.edit_text(
+        await callback.message.answer(
             "✅ Рассылка удалена",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+        logger.log_admin_action(callback.from_user.id, f"deleted mailing {mailing_id}")
     except Exception as e:
+        logger.error(f"Error deleting mailing {mailing_id}: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при удалении рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
 # Обработка кнопки отправки конкретной рассылки
 @router.callback_query(F.data.startswith("send_mailing_"))
@@ -753,13 +954,16 @@ async def send_specific_mailing(callback: CallbackQuery, bot: Bot):
             reply_markup=get_target_groups_keyboard(mailing_id),
             parse_mode="HTML"
         )
+        logger.log_admin_action(callback.from_user.id, f"initiated sending for mailing {mailing_id}")
     except Exception as e:
+        logger.error(f"Error initiating mailing send {mailing_id}: {e}", exc_info=True)
         await callback.message.edit_text(
             f"❌ Ошибка при выборе рассылки: {str(e)}",
             reply_markup=get_back_keyboard("admin_mailings")
         )
+    await callback.answer()
 
-# Добавляем новый обработчик для получения логов
+# Получение логов
 @router.callback_query(F.data == "get_logs")
 async def get_logs_menu(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -779,6 +983,7 @@ async def get_logs_menu(callback: CallbackQuery):
             f"❌ Ошибка при загрузке меню логов: {str(e)}",
             reply_markup=get_back_keyboard("admin_stats")
         )
+    await callback.answer()
 
 @router.callback_query(F.data == "logs_current")
 async def send_current_month_logs(callback: CallbackQuery, bot: Bot):
@@ -823,6 +1028,7 @@ async def send_current_month_logs(callback: CallbackQuery, bot: Bot):
             f"❌ Ошибка при отправке логов: {str(e)}",
             reply_markup=get_back_keyboard("get_logs")
         )
+    await callback.answer()
 
 @router.callback_query(F.data == "logs_previous")
 async def send_previous_month_logs(callback: CallbackQuery, bot: Bot):
@@ -869,6 +1075,166 @@ async def send_previous_month_logs(callback: CallbackQuery, bot: Bot):
             f"❌ Ошибка при отправке логов: {str(e)}",
             reply_markup=get_back_keyboard("get_logs")
         )
+    await callback.answer()
+
+@router.callback_query(F.data == "storage_stats")
+async def storage_stats(callback: CallbackQuery):
+    """Статистика хранилища медиафайлов"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.media_storage import media_storage
+        
+        stats = media_storage.get_storage_stats()
+        
+        # Форматируем информация о типах файлов
+        file_types_info = ""
+        for file_type, count in stats.get('file_types', {}).items():
+            file_types_info += f"   • {file_type}: {count} файлов\n"
+        
+        text = f"""
+📦 <b>Статистика хранилища медиафайлов</b>
+
+📁 <b>Общая информация:</b>
+   • Всего файлов: {stats['total_files']}
+   • Размер хранилища: {stats['total_size_mb']:.2f} MB
+   • Записей в метаданных: {stats['metadata_entries']}
+   • Возраст самого старого файла: {stats['oldest_file_days']} дней
+
+📊 <b>Файлы по типам:</b>
+{file_types_info}
+
+📍 <b>Путь к хранилищу:</b>
+<code>{stats['storage_path']}</code>
+
+⚙️ <b>Настройки очистки:</b>
+• Автоматически удаляются файлы старше 180 дней
+• Очистка выполняется каждые 24 часа
+        """
+        
+        # Создаем клавиатуру с кнопками управления
+        keyboard = InlineKeyboardBuilder()
+        keyboard.add(InlineKeyboardButton(
+            text="🧹 Очистить файлы старше 180 дней", 
+            callback_data="storage_cleanup_180"
+        ))
+        keyboard.add(InlineKeyboardButton(
+            text="⚠️ Очистить неиспользуемые 30+ дней", 
+            callback_data="storage_cleanup_30"
+        ))
+        keyboard.add(InlineKeyboardButton(text="🔄 Обновить статистику", callback_data="storage_stats"))
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+        keyboard.adjust(1)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error loading storage stats: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при загрузке статистики хранилища: {str(e)}",
+            reply_markup=get_back_keyboard("admin_stats")
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "storage_cleanup_180")
+async def storage_cleanup_180(callback: CallbackQuery):
+    """Очистка файлов старше 180 дней"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.media_storage import media_storage
+        
+        await callback.message.edit_text("🧹 Очищаю файлы старше 180 дней...")
+        
+        stats = media_storage.cleanup_old_files(days_old=180)
+        
+        text = f"""
+✅ <b>Очистка завершена!</b>
+
+📊 <b>Результаты:</b>
+   • Удалено файлов: {stats['deleted']}
+   • Оставлено файлов: {stats['kept']}
+   • Всего записей: {stats['total_metadata']}
+
+⚙️ <b>Критерии очистки:</b>
+• Удалены файлы, которые не использовались 180+ дней
+• Метаданные обновлены
+        """
+        
+        keyboard = InlineKeyboardBuilder()
+        keyboard.add(InlineKeyboardButton(text="📊 Обновить статистику", callback_data="storage_stats"))
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+        keyboard.adjust(1)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode="HTML"
+        )
+        
+        logger.log_admin_action(callback.from_user.id, f"cleaned storage (180 days): deleted {stats['deleted']} files")
+        
+    except Exception as e:
+        logger.error(f"Error cleaning storage: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при очистке хранилища: {str(e)}",
+            reply_markup=get_back_keyboard("storage_stats")
+        )
+    await callback.answer()
+
+@router.callback_query(F.data == "storage_cleanup_30")
+async def storage_cleanup_30(callback: CallbackQuery):
+    """Очистка неиспользуемых файлов (30+ дней)"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        from services.media_storage import media_storage
+        
+        await callback.message.edit_text("⚠️ Очищаю файлы, неиспользуемые 30+ дней...")
+        
+        deleted_count = media_storage.force_cleanup_all_unused(days_unused=30)
+        
+        text = f"""
+⚠️ <b>Принудительная очистка завершена!</b>
+
+📊 <b>Результаты:</b>
+   • Удалено файлов: {deleted_count}
+
+❗ <b>Внимание:</b>
+• Удалены ВСЕ файлы, которые не использовались 30+ дней
+• Включая файлы, которые могут понадобиться в будущем
+• Используйте осторожно!
+        """
+        
+        keyboard = InlineKeyboardBuilder()
+        keyboard.add(InlineKeyboardButton(text="📊 Обновить статистику", callback_data="storage_stats"))
+        keyboard.add(InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats"))
+        keyboard.adjust(1)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode="HTML"
+        )
+        
+        logger.log_admin_action(callback.from_user.id, f"force cleaned storage (30 days): deleted {deleted_count} files")
+        
+    except Exception as e:
+        logger.error(f"Error force cleaning storage: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ Ошибка при принудительной очистке хранилища: {str(e)}",
+            reply_markup=get_back_keyboard("storage_stats")
+        )
+    await callback.answer()
 
 @router.callback_query(F.data == "logs_all")
 async def send_all_logs(callback: CallbackQuery, bot: Bot):
@@ -918,3 +1284,4 @@ async def send_all_logs(callback: CallbackQuery, bot: Bot):
             f"❌ Ошибка при отправке логов: {str(e)}",
             reply_markup=get_back_keyboard("get_logs")
         )
+    await callback.answer()

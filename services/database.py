@@ -1,11 +1,14 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
 from datetime import datetime, timedelta
 import config
 import json
 import pytz
-from services.logger import logger
+import logging
+
+# Создаем локальный логгер для этого модуля
+logger = logging.getLogger('database')
 
 Base = declarative_base()
 
@@ -19,6 +22,14 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     joined_at = Column(DateTime, default=datetime.utcnow)
     last_activity = Column(DateTime, default=datetime.utcnow)
+
+    # Индексы для производительности
+    __table_args__ = (
+        Index('ix_users_user_id', 'user_id'),
+        Index('ix_users_last_activity', 'last_activity'),
+        Index('ix_users_joined_at', 'joined_at'),
+        Index('ix_users_is_active', 'is_active'),
+    )
 
 class WelcomeMessage(Base):
     __tablename__ = 'welcome_messages'
@@ -46,6 +57,14 @@ class Mailing(Base):
     trigger_word = Column(String(100), nullable=True)
     is_trigger_mailing = Column(Boolean, default=False)
 
+    # Индексы для производительности
+    __table_args__ = (
+        Index('ix_mailings_status', 'status'),
+        Index('ix_mailings_created_at', 'created_at'),
+        Index('ix_mailings_trigger_word', 'trigger_word'),
+        Index('ix_mailings_is_trigger_mailing', 'is_trigger_mailing'),
+    )
+
 class MailingStats(Base):
     __tablename__ = 'mailing_stats'
     
@@ -64,33 +83,66 @@ class MailingStats(Base):
     mailing = relationship("Mailing", backref="stats")
     user = relationship("User")
 
+    # Индексы для производительности
+    __table_args__ = (
+        Index('ix_mailing_stats_mailing_id', 'mailing_id'),
+        Index('ix_mailing_stats_user_id', 'user_id'),
+        Index('ix_mailing_stats_sent_at', 'sent_at'),
+        Index('ix_mailing_stats_delivered', 'delivered'),
+    )
+
+
 class Database:
     def __init__(self):
-        self.engine = create_engine(config.DATABASE_URL)
+        self.engine = create_engine(config.DATABASE_URL, pool_pre_ping=True)
+        self._setup_logger()
         self._create_tables()
-        Session = scoped_session(sessionmaker(bind=self.engine))
+        Session = scoped_session(sessionmaker(bind=self.engine, expire_on_commit=False))
         self.session = Session()
-        logger.info("Database initialized")
+        self.log_info("Database initialized")
+
+    def _setup_logger(self):
+        """Настройка логгера для этого модуля"""
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+
+    def log_info(self, message: str):
+        """Логирование информационных сообщений"""
+        logger.info(message)
+
+    def log_error(self, message: str, exc_info: bool = False):
+        """Логирование ошибок"""
+        logger.error(message, exc_info=exc_info)
+
+    def log_warning(self, message: str):
+        """Логирование предупреждений"""
+        logger.warning(message)
+
+    def log_debug(self, message: str):
+        """Логирование отладочной информации"""
+        logger.debug(message)
 
     def _create_tables(self):
         """Создание таблиц если они не существуют"""
         try:
             Base.metadata.create_all(self.engine)
-            logger.info("Tables created/verified")
+            self.log_info("Tables created/verified")
         except Exception as e:
-            logger.error(f"Error creating tables: {e}", exc_info=True)
+            self.log_error(f"Error creating tables: {e}", exc_info=True)
+            raise
 
-    def _get_moscow_time_functions(self):
-        """Локальный импорт для избежания циклических импортов - возвращает функции, а не их результат"""
-        from utils.timezone import get_moscow_time, utc_to_moscow, moscow_to_utc
-        return get_moscow_time, utc_to_moscow, moscow_to_utc
+    def get_current_utc_time(self):
+        """Получить текущее время в UTC"""
+        return datetime.utcnow()
 
     def _get_mailing_dict(self, mailing):
-        """Преобразует объект Mailing в словарь с московским временем"""
+        """Преобразует объект Mailing в словарь"""
         if not mailing:
             return None
-            
-        _, utc_to_moscow, _ = self._get_moscow_time_functions()
             
         mailing_dict = {
             'id': mailing.id,
@@ -101,14 +153,16 @@ class Database:
             'status': mailing.status,
             'trigger_word': mailing.trigger_word,
             'is_trigger_mailing': mailing.is_trigger_mailing,
-            'created_at': utc_to_moscow(mailing.created_at) if mailing.created_at else None,
-            'updated_at': utc_to_moscow(mailing.updated_at) if mailing.updated_at else None
+            'created_at': mailing.created_at,
+            'updated_at': mailing.updated_at
         }
         
+        # Безопасная обработка кнопок
         if mailing.buttons:
             try:
                 mailing_dict['buttons'] = json.loads(mailing.buttons)
-            except:
+            except (json.JSONDecodeError, TypeError) as e:
+                self.log_warning(f"Error parsing buttons for mailing {mailing.id}: {e}")
                 mailing_dict['buttons'] = []
         else:
             mailing_dict['buttons'] = []
@@ -121,19 +175,18 @@ class Database:
         try:
             welcome = self.session.query(WelcomeMessage).filter_by(is_active=True).first()
             if welcome:
-                _, utc_to_moscow, _ = self._get_moscow_time_functions()
                 return {
                     'id': welcome.id,
                     'message_text': welcome.message_text,
                     'message_type': welcome.message_type,
                     'media_file_id': welcome.media_file_id,
                     'is_active': welcome.is_active,
-                    'created_at': utc_to_moscow(welcome.created_at) if welcome.created_at else None,
-                    'updated_at': utc_to_moscow(welcome.updated_at) if welcome.updated_at else None
+                    'created_at': welcome.created_at,
+                    'updated_at': welcome.updated_at
                 }
             return None
         except Exception as e:
-            logger.error(f"Error getting welcome message: {e}", exc_info=True)
+            self.log_error(f"Error getting welcome message: {e}", exc_info=True)
             return None
 
     def update_welcome_message(self, message_text: str, message_type: str = "text", media_file_id: str = None):
@@ -151,10 +204,10 @@ class Database:
             )
             self.session.add(welcome)
             self.session.commit()
-            logger.info("Welcome message updated")
+            self.log_info("Welcome message updated")
             return True
         except Exception as e:
-            logger.error(f"Error updating welcome message: {e}", exc_info=True)
+            self.log_error(f"Error updating welcome message: {e}", exc_info=True)
             self.session.rollback()
             return False
 
@@ -168,7 +221,7 @@ class Database:
             ).all()
             return [self._get_mailing_dict(mailing) for mailing in mailings]
         except Exception as e:
-            logger.error(f"Error getting active trigger mailings: {e}", exc_info=True)
+            self.log_error(f"Error getting active trigger mailings: {e}", exc_info=True)
             return []
 
     def get_mailing_by_trigger_word(self, trigger_word: str):
@@ -181,140 +234,168 @@ class Database:
             ).first()
             return self._get_mailing_dict(mailing)
         except Exception as e:
-            logger.error(f"Error getting mailing by trigger word '{trigger_word}': {e}", exc_info=True)
+            self.log_error(f"Error getting mailing by trigger word '{trigger_word}': {e}", exc_info=True)
             return None
 
+    # ОПТИМИЗИРОВАННЫЕ МЕТОДЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ
     def get_user(self, user_id: int):
         """Получить пользователя по ID"""
         try:
             return self.session.query(User).filter_by(user_id=user_id).first()
         except Exception as e:
-            logger.error(f"Error getting user {user_id}: {e}")
+            self.log_error(f"Error getting user {user_id}: {e}", exc_info=True)
             return None
 
     def add_user(self, user_id: int, username: str, full_name: str):
+        """Добавить нового пользователя или обновить существующего"""
         try:
             user = self.session.query(User).filter_by(user_id=user_id).first()
             if not user:
                 user = User(user_id=user_id, username=username, full_name=full_name)
                 self.session.add(user)
                 self.session.commit()
-                logger.info(f"New user added: {user_id} (@{username})")
+                self.log_info(f"New user added: {user_id} (@{username})")
+            elif user.username != username or user.full_name != full_name:
+                # Обновляем информацию если изменилась
+                user.username = username
+                user.full_name = full_name
+                self.session.commit()
+                self.log_info(f"User info updated: {user_id}")
             return user
         except Exception as e:
-            logger.error(f"Error adding user {user_id}: {e}", exc_info=True)
+            self.log_error(f"Error adding/updating user {user_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
 
     def update_user_activity(self, user_id: int):
+        """Обновить время последней активности пользователя"""
         try:
             user = self.session.query(User).filter_by(user_id=user_id).first()
             if user:
                 user.last_activity = datetime.utcnow()
                 self.session.commit()
-                logger.debug(f"User activity updated: {user_id}")
+                self.log_debug(f"User activity updated: {user_id}")
         except Exception as e:
-            logger.error(f"Error updating user activity {user_id}: {e}", exc_info=True)
+            self.log_error(f"Error updating user activity {user_id}: {e}", exc_info=True)
             self.session.rollback()
 
-    def get_all_users(self):
+    def get_all_users(self, limit: int = None):
+        """Получить всех пользователей с поддержкой лимита"""
         try:
-            return self.session.query(User).filter_by(is_active=True).all()
+            query = self.session.query(User).filter_by(is_active=True)
+            if limit:
+                query = query.limit(limit)
+            return query.all()
         except Exception as e:
-            logger.error(f"Error getting all users: {e}", exc_info=True)
+            self.log_error(f"Error getting all users: {e}", exc_info=True)
             return []
 
-    def get_active_users_today(self):
+    def get_all_users_generator(self, batch_size: int = 100):
+        """Генератор для получения пользователей батчами (для больших объемов)"""
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
-            today_moscow = get_moscow_time().date()
-            
-            # Создаем datetime объекты в московском времени
-            today_start_naive = datetime.combine(today_moscow, datetime.min.time())
-            today_end_naive = datetime.combine(today_moscow, datetime.max.time())
-            
-            # Конвертируем в UTC для сравнения с данными в БД
-            today_start = moscow_to_utc(today_start_naive)
-            today_end = moscow_to_utc(today_end_naive)
+            offset = 0
+            while True:
+                users = self.session.query(User).filter_by(is_active=True)\
+                    .offset(offset).limit(batch_size).all()
+                if not users:
+                    break
+                for user in users:
+                    yield user
+                offset += batch_size
+        except Exception as e:
+            self.log_error(f"Error in users generator: {e}", exc_info=True)
+
+    def get_active_users_today(self):
+        """Получить пользователей, активных сегодня"""
+        try:
+            now = datetime.utcnow()
+            today_start = datetime(now.year, now.month, now.day, 0, 0, 0)
+            today_end = datetime(now.year, now.month, now.day, 23, 59, 59, 999999)
             
             users = self.session.query(User).filter(
                 User.is_active == True,
                 User.last_activity >= today_start,
                 User.last_activity <= today_end
             ).all()
-            logger.debug(f"Found {len(users)} active users today")
+            
+            self.log_debug(f"Found {len(users)} active users today")
             return users
         except Exception as e:
-            logger.error(f"Error getting active users today: {e}", exc_info=True)
+            self.log_error(f"Error getting active users today: {e}", exc_info=True)
             return []
 
     def get_new_users(self, days: int = 7):
+        """Получить новых пользователей за указанное количество дней"""
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
-            since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
+            since_date = datetime.utcnow() - timedelta(days=days)
+            
             users = self.session.query(User).filter(
                 User.joined_at >= since_date
             ).all()
-            logger.debug(f"Found {len(users)} new users in last {days} days")
+            
+            self.log_debug(f"Found {len(users)} new users in last {days} days")
             return users
         except Exception as e:
-            logger.error(f"Error getting new users for {days} days: {e}", exc_info=True)
+            self.log_error(f"Error getting new users for {days} days: {e}", exc_info=True)
             return []
 
     def get_user_count(self):
+        """Получить общее количество пользователей"""
         try:
             count = self.session.query(User).filter_by(is_active=True).count()
             return count
         except Exception as e:
-            logger.error(f"Error counting users: {e}", exc_info=True)
+            self.log_error(f"Error counting users: {e}", exc_info=True)
             return 0
 
     def get_active_users_count_today(self):
+        """Получить количество активных пользователей сегодня"""
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
-            today_moscow = get_moscow_time().date()
-            today_start_naive = datetime.combine(today_moscow, datetime.min.time())
-            today_end_naive = datetime.combine(today_moscow, datetime.max.time())
-            
-            today_start = moscow_to_utc(today_start_naive)
-            today_end = moscow_to_utc(today_end_naive)
+            now = datetime.utcnow()
+            today_start = datetime(now.year, now.month, now.day, 0, 0, 0)
+            today_end = datetime(now.year, now.month, now.day, 23, 59, 59, 999999)
             
             count = self.session.query(User).filter(
                 User.is_active == True,
                 User.last_activity >= today_start,
                 User.last_activity <= today_end
             ).count()
+            
             return count
         except Exception as e:
-            logger.error(f"Error counting active users today: {e}", exc_info=True)
+            self.log_error(f"Error counting active users today: {e}", exc_info=True)
             return 0
 
     def get_active_users_count_week(self):
+        """Получить количество активных пользователей за неделю"""
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
-            week_ago = moscow_to_utc(get_moscow_time() - timedelta(days=7))
+            week_ago = datetime.utcnow() - timedelta(days=7)
+            
             count = self.session.query(User).filter(
                 User.is_active == True,
                 User.last_activity >= week_ago
             ).count()
+            
             return count
         except Exception as e:
-            logger.error(f"Error counting active users for week: {e}", exc_info=True)
+            self.log_error(f"Error counting active users for week: {e}", exc_info=True)
             return 0
 
     def get_new_users_count(self, days: int = 1):
+        """Получить количество новых пользователей за указанное количество дней"""
         try:
-            get_moscow_time, _, moscow_to_utc = self._get_moscow_time_functions()
-            since_date = moscow_to_utc(get_moscow_time() - timedelta(days=days))
+            since_date = datetime.utcnow() - timedelta(days=days)
+            
             count = self.session.query(User).filter(
                 User.joined_at >= since_date
             ).count()
+            
             return count
         except Exception as e:
-            logger.error(f"Error counting new users for {days} days: {e}", exc_info=True)
+            self.log_error(f"Error counting new users for {days} days: {e}", exc_info=True)
             return 0
 
-    # Добавленные методы
+    # Алиасы для удобства
     def get_new_users_count_week(self):
         """Количество новых пользователей за неделю"""
         return self.get_new_users_count(days=7)
@@ -331,10 +412,21 @@ class Database:
         """Список новых пользователей за месяц"""
         return self.get_new_users(days=30)
 
+    # МЕТОДЫ ДЛЯ РАССЫЛОК
     def create_mailing(self, title: str, message_text: str, message_type: str = "text", 
-                      media_file_id: str = None, buttons: list = None, status: str = "draft"):
+                      media_file_id: str = None, buttons: list = None, status: str = "draft",
+                      trigger_word: str = None, is_trigger_mailing: bool = False):
+        """Создать новую рассылку"""
         try:
-            buttons_json = json.dumps(buttons or [])
+            # Валидация кнопок
+            if buttons:
+                try:
+                    buttons_json = json.dumps(buttons)
+                except (TypeError, ValueError) as e:
+                    self.log_error(f"Invalid buttons format: {e}")
+                    buttons_json = "[]"
+            else:
+                buttons_json = "[]"
             
             mailing = Mailing(
                 title=title,
@@ -342,67 +434,93 @@ class Database:
                 message_type=message_type,
                 media_file_id=media_file_id,
                 buttons=buttons_json,
-                status=status
+                status=status,
+                trigger_word=trigger_word,
+                is_trigger_mailing=is_trigger_mailing
             )
+            
             self.session.add(mailing)
             self.session.commit()
-            logger.info(f"New mailing created: '{title}' (ID: {mailing.id})")
+            
+            self.log_info(f"New mailing created: '{title}' (ID: {mailing.id}, Type: {message_type})")
             return self._get_mailing_dict(mailing)
+            
         except Exception as e:
-            logger.error(f"Error creating mailing '{title}': {e}", exc_info=True)
+            self.log_error(f"Error creating mailing '{title}': {e}", exc_info=True)
             self.session.rollback()
             return None
 
     def update_mailing(self, mailing_id: int, **kwargs):
+        """Обновить рассылку"""
         try:
             mailing = self.session.query(Mailing).filter_by(id=mailing_id).first()
-            if mailing:
-                for key, value in kwargs.items():
-                    if key == 'buttons' and isinstance(value, list):
+            if not mailing:
+                self.log_warning(f"Mailing {mailing_id} not found for update")
+                return None
+                
+            for key, value in kwargs.items():
+                if key == 'buttons' and isinstance(value, list):
+                    try:
                         value = json.dumps(value)
-                    setattr(mailing, key, value)
-                mailing.updated_at = datetime.utcnow()
-                self.session.commit()
-                logger.info(f"Mailing {mailing_id} updated: {list(kwargs.keys())}")
-                return self._get_mailing_dict(mailing)
-            return None
+                    except (TypeError, ValueError) as e:
+                        self.log_error(f"Invalid buttons format for mailing {mailing_id}: {e}")
+                        continue
+                setattr(mailing, key, value)
+                
+            mailing.updated_at = datetime.utcnow()
+            self.session.commit()
+            
+            self.log_info(f"Mailing {mailing_id} updated: {list(kwargs.keys())}")
+            return self._get_mailing_dict(mailing)
+            
         except Exception as e:
-            logger.error(f"Error updating mailing {mailing_id}: {e}", exc_info=True)
+            self.log_error(f"Error updating mailing {mailing_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
 
     def get_mailing(self, mailing_id: int):
+        """Получить рассылку по ID"""
         try:
             mailing = self.session.query(Mailing).filter_by(id=mailing_id).first()
             return self._get_mailing_dict(mailing)
         except Exception as e:
-            logger.error(f"Error getting mailing {mailing_id}: {e}", exc_info=True)
+            self.log_error(f"Error getting mailing {mailing_id}: {e}", exc_info=True)
             return None
 
-    def get_mailings_by_status(self, status: str):
+    def get_mailings_by_status(self, status: str, limit: int = None):
+        """Получить рассылки по статусу"""
         try:
-            mailings = self.session.query(Mailing).filter_by(status=status).all()
+            query = self.session.query(Mailing).filter_by(status=status)
+            if limit:
+                query = query.limit(limit)
+                
+            mailings = query.all()
             result = [self._get_mailing_dict(mailing) for mailing in mailings]
-            logger.debug(f"Found {len(result)} mailings with status '{status}'")
+            
+            self.log_debug(f"Found {len(result)} mailings with status '{status}'")
             return result
+            
         except Exception as e:
-            logger.error(f"Error getting mailings by status '{status}': {e}", exc_info=True)
+            self.log_error(f"Error getting mailings by status '{status}': {e}", exc_info=True)
             return []
 
     def get_all_mailings(self):
+        """Получить все рассылки (кроме удаленных)"""
         try:
             mailings = self.session.query(Mailing).filter(Mailing.status != 'deleted').all()
             result = [self._get_mailing_dict(mailing) for mailing in mailings]
             return result
         except Exception as e:
-            logger.error(f"Error getting all mailings: {e}", exc_info=True)
+            self.log_error(f"Error getting all mailings: {e}", exc_info=True)
             return []
 
     def change_mailing_status(self, mailing_id: int, status: str):
-        logger.info(f"Changing mailing {mailing_id} status to '{status}'")
+        """Изменить статус рассылки"""
+        self.log_info(f"Changing mailing {mailing_id} status to '{status}'")
         return self.update_mailing(mailing_id, status=status)
 
     def get_mailing_stats(self, mailing_id: int):
+        """Получить статистику по рассылке"""
         try:
             stats = self.session.query(MailingStats).filter_by(mailing_id=mailing_id)
             total_sent = stats.count()
@@ -416,10 +534,47 @@ class Database:
                 'success_rate': (delivered / total_sent * 100) if total_sent > 0 else 0
             }
         except Exception as e:
-            logger.error(f"Error getting mailing stats for {mailing_id}: {e}", exc_info=True)
+            self.log_error(f"Error getting mailing stats for {mailing_id}: {e}", exc_info=True)
             return {'total_sent': 0, 'delivered': 0, 'read': 0, 'success_rate': 0}
 
+    def get_bulk_mailing_stats(self, mailing_ids: list):
+        """Получить статистику для нескольких рассылок за один запрос"""
+        try:
+            from sqlalchemy import func
+            
+            result = self.session.query(
+                MailingStats.mailing_id,
+                func.count(MailingStats.id).label('total_sent'),
+                func.sum(func.cast(MailingStats.delivered, Integer)).label('delivered'),
+                func.sum(func.cast(MailingStats.read, Integer)).label('read')
+            ).filter(
+                MailingStats.mailing_id.in_(mailing_ids)
+            ).group_by(
+                MailingStats.mailing_id
+            ).all()
+            
+            stats_dict = {}
+            for row in result:
+                stats_dict[row.mailing_id] = {
+                    'total_sent': row.total_sent,
+                    'delivered': row.delivered or 0,
+                    'read': row.read or 0,
+                    'success_rate': (row.delivered / row.total_sent * 100) if row.total_sent > 0 else 0
+                }
+            
+            # Добавляем нулевые записи для рассылок без статистики
+            for mailing_id in mailing_ids:
+                if mailing_id not in stats_dict:
+                    stats_dict[mailing_id] = {'total_sent': 0, 'delivered': 0, 'read': 0, 'success_rate': 0}
+            
+            return stats_dict
+            
+        except Exception as e:
+            self.log_error(f"Error getting bulk mailing stats: {e}", exc_info=True)
+            return {}
+
     def add_mailing_stats(self, mailing_id: int, user_id: int, target_group: str):
+        """Добавить запись статистики для рассылки"""
         try:
             stats = MailingStats(
                 mailing_id=mailing_id,
@@ -431,11 +586,12 @@ class Database:
             self.session.commit()
             return stats
         except Exception as e:
-            logger.error(f"Error adding mailing stats for mailing {mailing_id}, user {user_id}: {e}", exc_info=True)
+            self.log_error(f"Error adding mailing stats for mailing {mailing_id}, user {user_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
 
     def update_mailing_stats(self, stats_id: int, **kwargs):
+        """Обновить статистику рассылки"""
         try:
             stats = self.session.query(MailingStats).filter_by(id=stats_id).first()
             if stats:
@@ -448,9 +604,23 @@ class Database:
                 self.session.commit()
             return stats
         except Exception as e:
-            logger.error(f"Error updating mailing stats {stats_id}: {e}", exc_info=True)
+            self.log_error(f"Error updating mailing stats {stats_id}: {e}", exc_info=True)
             self.session.rollback()
             return None
+
+    def close(self):
+        """Закрыть соединение с базой данных"""
+        try:
+            self.session.remove()
+            self.engine.dispose()
+            self.log_info("Database connection closed")
+        except Exception as e:
+            self.log_error(f"Error closing database: {e}", exc_info=True)
+
+    def __del__(self):
+        """Деструктор для автоматического закрытия соединения"""
+        self.close()
+
 
 # Создаем экземпляр базы данных
 db = Database()

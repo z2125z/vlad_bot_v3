@@ -1,16 +1,25 @@
-# Sensitive data
+# 🔐 Sensitive data
 .env
 *.env
 *.key
-*.pempem
+*.pem
+config.py
+secrets.json
+credentials.json
+*.session
+webhook_cert.pem
 
-# Database
+# 🗄️ Database and exports
 *.db
 *.sqlite3
-xlsx
-.xlsx
+*.db-journal
+*.sqlite3-journal
+exports/
+*.xlsx
+*.csv
+backups/
 
-# Python
+# 🐍 Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -18,20 +27,164 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 env.bak/
 venv.bak/
+.python-version
 
-# IDE
+# 📦 Build and distribution
+build/
+dist/
+*.egg-info/
+wheels/
+pip-wheel-metadata/
+
+# 🧪 Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+.coverage.*
+
+# 📝 Logs
+*.log
+logs/
+bot.log
+telegram_bot.log
+
+# 💻 IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+*.code-workspace
 
-# Logs
-*.log
-logs/
-
-# OS
+# 🖥️ OS
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# 🤖 Bot specific
+bot_data/
+user_data/
+temp_media/
+downloads/
+
+# 🗑️ Temporary files
+*.tmp
+*.temp
+.tmp/
+temp/
+
+# 📊 MyPy
+.mypy_cache/
+.dmypy.json
+
+# 🍎 macOS
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+# 🪟 Windows
+$RECYCLE.BIN/
+*.lnk
+
+# 🐧 Linux
+*~
+
+# 📁 Media storage (важное дополнение!)
+media_storage/
+uploads/
+media/
+temp_files/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.mp4
+*.mov
+*.avi
+*.mp3
+*.ogg
+*.wav
+*.pdf
+*.doc
+*.docx
+*.zip
+*.rar
+
+# 🗂️ Специфичные для проекта директории
+storage/
+cache/
+sessions/
+
+# 🔧 Миграции (если используете Alembic)
+alembic/versions/*.py
+!alembic/versions/__init__.py
+
+# 🧹 Очистка при разработке
+*.orig
+*.rej
+.pytest_cache/
+test_output/
+
+# 🚀 Docker
+docker-compose.override.yml
+*.dockerfile
+.dockerignore
+
+# 📊 Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb
+
+# 🛠️ Дополнительные инструменты
+.pre-commit-config.yaml
+ruff_cache/
+.mypy_cache/
+
+# 📈 Excel временные файлы
+~$*.xlsx
+~$*.xls
+
+# 🧰 Конфигурации для конкретного IDE
+.ropeproject/
+
+# 🔍 Поисковые индексы
+.spotlight*
+.Trash-*
+
+# 🌐 Веб-интерфейсы (если будет)
+static/
+templates/
+
+# 🗄️ Резервные копии базы данных
+*.bak
+*.backup
+dump.sql
+
+# 🎨 Cache для предпросмотра
+.cache/
+
+# 📦 Pipenv
+Pipfile.lock
+poetry.lock
+
+# 🔄 Миграции (если делаете вручную)
+migration_*.py
+
+# 📱 Мобильные/десктоп специфичные
+*.app
+*.apk
+*.ipa
+*.exe
+
+# 🖼️ Превью изображений
+*.webp
+.heic
+.heif

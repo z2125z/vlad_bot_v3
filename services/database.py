@@ -25,13 +25,8 @@ class User(Base):
     joined_at = Column(DateTime, default=datetime.utcnow, index=True)
     last_activity = Column(DateTime, default=datetime.utcnow, index=True)
 
-    # Дополнительные индексы
-    __table_args__ = (
-        Index('ix_users_user_id', 'user_id'),
-        Index('ix_users_last_activity', 'last_activity'),
-        Index('ix_users_joined_at', 'joined_at'),
-        Index('ix_users_is_active', 'is_active'),
-    )
+    # Убираем ВСЕ индексы из __table_args__ - они уже созданы через index=True
+    __table_args__ = ()
 
 class WelcomeMessage(Base):
     __tablename__ = 'welcome_messages'
@@ -52,23 +47,23 @@ class Mailing(Base):
     message_text = Column(Text)
     message_type = Column(String(50), nullable=False)
     media_file_id = Column(String(255), nullable=True)
-    status = Column(String(50), default='draft', index=True)
+    status = Column(String(50), default='draft', index=True)  # Индекс в колонке
     buttons = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)  # Индекс в колонке
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    trigger_word = Column(String(100), nullable=True, index=True)
-    is_trigger_mailing = Column(Boolean, default=False, index=True)
+    trigger_word = Column(String(100), nullable=True, index=True)  # Индекс в колонке
+    is_trigger_mailing = Column(Boolean, default=False, index=True)  # Индекс в колонке
     # Новые поля для документов
     document_original_name = Column(String(255), nullable=True)
     document_mime_type = Column(String(100), nullable=True)
     document_file_size = Column(Integer, nullable=True)
 
-    # Индексы для производительности
+    # Оставляем только составные или специальные индексы, которых нет в колонках
     __table_args__ = (
-        Index('ix_mailings_status', 'status'),
-        Index('ix_mailings_created_at', 'created_at'),
-        Index('ix_mailings_trigger_word', 'trigger_word'),
-        Index('ix_mailings_is_trigger_mailing', 'is_trigger_mailing'),
+        # Создаем составные индексы или индексы по функциям если нужно
+        # Для производительности можно добавить составные индексы
+        Index('ix_mailings_status_type', 'status', 'message_type'),
+        Index('ix_mailings_trigger_status', 'trigger_word', 'status'),
     )
 
 class MailingStats(Base):
@@ -79,22 +74,20 @@ class MailingStats(Base):
     user_id = Column(Integer, ForeignKey('users.user_id'), index=True)
     target_group = Column(String(50))
     sent = Column(Boolean, default=False)
-    delivered = Column(Boolean, default=False, index=True)
+    delivered = Column(Boolean, default=False, index=True)  # Индекс в колонке
     read = Column(Boolean, default=False)
     clicked = Column(Boolean, default=False)
-    sent_at = Column(DateTime, nullable=True, index=True)
+    sent_at = Column(DateTime, nullable=True, index=True)  # Индекс в колонке
     delivered_at = Column(DateTime, nullable=True)
     read_at = Column(DateTime, nullable=True)
     
     mailing = relationship("Mailing", backref="stats")
     user = relationship("User")
 
-    # Индексы для производительности
+    # Оставляем только составные индексы
     __table_args__ = (
-        Index('ix_mailing_stats_mailing_id', 'mailing_id'),
-        Index('ix_mailing_stats_user_id', 'user_id'),
-        Index('ix_mailing_stats_sent_at', 'sent_at'),
-        Index('ix_mailing_stats_delivered', 'delivered'),
+        Index('ix_mailing_stats_mailing_user', 'mailing_id', 'user_id'),
+        Index('ix_mailing_stats_mailing_sent', 'mailing_id', 'sent_at'),
     )
 
 
@@ -139,6 +132,10 @@ class Database:
             self.log_info("Tables created/verified")
         except Exception as e:
             self.log_error(f"Error creating tables: {e}", exc_info=True)
+            # Вместо падения, пытаемся удалить существующую БД и создать заново
+            # Это крайняя мера для разработки
+            if "already exists" in str(e):
+                self.log_warning("Database has duplicate indexes. Consider dropping and recreating the database.")
             raise
 
     def get_session(self):

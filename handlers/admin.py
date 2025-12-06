@@ -17,7 +17,8 @@ from utils.helpers import (
     format_stats_overview,
     format_users_stats,
     format_mailings_stats,
-    format_mailing_preview
+    format_mailing_preview,
+    combine_keyboards
 )
 import config
 import os
@@ -35,6 +36,22 @@ def is_admin(user_id: int) -> bool:
         return False
     return user_id in config.ADMIN_IDS
 
+def get_mailing_button_text(mailing: dict) -> str:
+    """Безопасное получение текста кнопки для рассылки"""
+    title = mailing.get('title', 'Без названия')
+    
+    # Ограничиваем длину названия корректно для UTF-8
+    if len(title) > 20:
+        title = title[:17] + "..."
+    
+    if mailing.get('is_trigger_mailing'):
+        trigger_word = mailing.get('trigger_word')
+        # Проверяем, что trigger_word не None и не пустой
+        if trigger_word and trigger_word.strip():
+            return f"🔤 {trigger_word} ({title})"
+    
+    return f"📝 {title}"
+
 # Главная команда админа
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
@@ -50,7 +67,7 @@ async def cmd_admin(message: Message, state: FSMContext):
         reply_markup=get_admin_main_keyboard(),
         parse_mode="HTML"
     )
-    logger.log_admin_action(message.from_user.id, "opened admin panel")
+    logger.log_admin_action(message.chat.id, "opened admin panel")
 
 # 📊 РАЗДЕЛ СТАТИСТИКИ
 @router.callback_query(F.data == "admin_stats")
@@ -118,7 +135,7 @@ async def stats_users(callback: CallbackQuery):
 # Статистика рассылок
 @router.callback_query(F.data == "stats_mailings")
 async def stats_mailings(callback: CallbackQuery):
-    """Статистика рассылок"""
+    """Статистика рассылки"""
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен")
         return
@@ -155,6 +172,44 @@ async def admin_mailings(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+def _format_mailings_list(mailings, page, total_pages, status_name, db):
+    """Форматирование списка рассылок (общая функция)"""
+    items_per_page = 10
+    start_idx = (page - 1) * items_per_page
+    end_idx = start_idx + items_per_page
+    current_mailings = mailings[start_idx:end_idx]
+    
+    emoji = {
+        'active': '✅',
+        'draft': '📝',
+        'archived': '📁'
+    }.get(status_name, '📨')
+    
+    text = f"{emoji} <b>{status_name} рассылки (страница {page}/{total_pages}):</b>\n\n"
+    
+    for mailing in current_mailings:
+        created_at = ""
+        if mailing.get('created_at'):
+            created_at = mailing['created_at'].strftime('%d.%m.%Y')
+        
+        # Добавляем информацию о кодовом слове, если есть
+        trigger_word_info = ""
+        if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+            trigger_word = mailing.get('trigger_word')
+            if trigger_word and trigger_word.strip():
+                trigger_word_info = f" 🔤{trigger_word}"
+        
+        text += f"📨 {mailing['title'][:50]}{trigger_word_info}\n"
+        
+        if status_name == 'Активные' or status_name == 'Архив':
+            stats = db.get_mailing_stats(mailing['id'])
+            text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
+        
+        text += f"   🕐 Создана: {created_at}\n"
+        text += f"   [ID: {mailing['id']}]\n\n"
+    
+    return text, current_mailings
+
 # Активные рассылки с пагинацией
 @router.callback_query(F.data.startswith("mailings_active_"))
 async def mailings_active(callback: CallbackQuery):
@@ -189,36 +244,14 @@ async def mailings_active(callback: CallbackQuery):
         total_pages = max(1, math.ceil(total_items / items_per_page))
         page = max(1, min(page, total_pages))
         
-        # Вычисляем диапазон для текущей страницы
-        start_idx = (page - 1) * items_per_page
-        end_idx = start_idx + items_per_page
-        current_mailings = mailings[start_idx:end_idx]
-        
-        text = f"✅ <b>Активные рассылки (страница {page}/{total_pages}):</b>\n\n"
-        
-        for mailing in current_mailings:
-            stats = db.get_mailing_stats(mailing['id'])
-            created_at = ""
-            if mailing.get('created_at'):
-                created_at = mailing['created_at'].strftime('%d.%m.%Y')
-            
-            # Добавляем информацию о кодовом слове, если есть
-            trigger_word_info = ""
-            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                trigger_word_info = f" 🔤{mailing['trigger_word']}"
-            
-            text += f"📨 {mailing['title'][:50]}{trigger_word_info}\n"
-            text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
-            text += f"   🕐 Создана: {created_at}\n"
-            text += f"   [ID: {mailing['id']}]\n\n"
+        # Форматируем текст
+        text, current_mailings = _format_mailings_list(mailings, page, total_pages, "Активные", db)
         
         # Создаем клавиатуру
         keyboard = InlineKeyboardBuilder()
         
         for mailing in current_mailings:
-            button_text = f"📝 {mailing['title'][:20]}..."
-            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                button_text = f"🔤 {mailing['trigger_word']}"
+            button_text = get_mailing_button_text(mailing)
             
             keyboard.add(InlineKeyboardButton(
                 text=button_text,
@@ -231,21 +264,7 @@ async def mailings_active(callback: CallbackQuery):
         pagination_keyboard = get_pagination_keyboard(page, total_pages, "mailings_active")
         
         # Объединяем клавиатуры
-        combined_keyboard = InlineKeyboardBuilder()
-        
-        # Добавляем кнопки рассылок
-        for button in keyboard.export():
-            combined_keyboard.add(button)
-        
-        # Добавляем кнопки пагинации
-        if pagination_keyboard.inline_keyboard:
-            for button in pagination_keyboard.inline_keyboard[0]:
-                combined_keyboard.add(InlineKeyboardButton(
-                    text=button.text,
-                    callback_data=button.callback_data
-                ))
-        
-        combined_keyboard.adjust(1, 3)
+        combined_keyboard = combine_keyboards(keyboard, pagination_keyboard)
         
         await callback.message.edit_text(
             text,
@@ -293,34 +312,14 @@ async def mailings_drafts(callback: CallbackQuery):
         total_pages = max(1, math.ceil(total_items / items_per_page))
         page = max(1, min(page, total_pages))
         
-        # Вычисляем диапазон для текущей страницы
-        start_idx = (page - 1) * items_per_page
-        end_idx = start_idx + items_per_page
-        current_mailings = mailings[start_idx:end_idx]
-        
-        text = f"📝 <b>Черновики рассылок (страница {page}/{total_pages}):</b>\n\n"
-        
-        for mailing in current_mailings:
-            created_at = ""
-            if mailing.get('created_at'):
-                created_at = mailing['created_at'].strftime('%d.%m.%Y')
-            
-            # Добавляем информация о кодовом слове, если есть
-            trigger_word_info = ""
-            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                trigger_word_info = f" 🔤{mailing['trigger_word']}"
-            
-            text += f"📄 {mailing['title'][:50]}{trigger_word_info}\n"
-            text += f"   🕐 Создан: {created_at}\n"
-            text += f"   [ID: {mailing['id']}]\n\n"
+        # Форматируем текст
+        text, current_mailings = _format_mailings_list(mailings, page, total_pages, "Черновики", db)
         
         # Создаем клавиатуру с пагинацией
         keyboard = InlineKeyboardBuilder()
         
         for mailing in current_mailings:
-            button_text = f"📝 {mailing['title'][:20]}..."
-            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                button_text = f"🔤 {mailing['trigger_word']}"
+            button_text = get_mailing_button_text(mailing)
             
             keyboard.add(InlineKeyboardButton(
                 text=button_text,
@@ -333,18 +332,7 @@ async def mailings_drafts(callback: CallbackQuery):
         pagination_keyboard = get_pagination_keyboard(page, total_pages, "mailings_drafts")
         
         # Объединяем клавиатуры
-        combined_keyboard = InlineKeyboardBuilder()
-        for button in keyboard.export():
-            combined_keyboard.add(button)
-        
-        if pagination_keyboard.inline_keyboard:
-            for button in pagination_keyboard.inline_keyboard[0]:
-                combined_keyboard.add(InlineKeyboardButton(
-                    text=button.text,
-                    callback_data=button.callback_data
-                ))
-        
-        combined_keyboard.adjust(1, 3)
+        combined_keyboard = combine_keyboards(keyboard, pagination_keyboard)
         
         await callback.message.edit_text(
             text,
@@ -392,36 +380,14 @@ async def mailings_archive(callback: CallbackQuery):
         total_pages = max(1, math.ceil(total_items / items_per_page))
         page = max(1, min(page, total_pages))
         
-        # Вычисляем диапазон для текущей страницы
-        start_idx = (page - 1) * items_per_page
-        end_idx = start_idx + items_per_page
-        current_mailings = mailings[start_idx:end_idx]
-        
-        text = f"📁 <b>Архив рассылок (страница {page}/{total_pages}):</b>\n\n"
-        
-        for mailing in current_mailings:
-            stats = db.get_mailing_stats(mailing['id'])
-            created_at = ""
-            if mailing.get('created_at'):
-                created_at = mailing['created_at'].strftime('%d.%m.%Y')
-            
-            # Добавляем информация о кодовом слове, если есть
-            trigger_word_info = ""
-            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                trigger_word_info = f" 🔤{mailing['trigger_word']}"
-            
-            text += f"📨 {mailing['title'][:50]}{trigger_word_info}\n"
-            text += f"   📊 Отправлено: {stats['delivered']}/{stats['total_sent']}\n"
-            text += f"   🕐 Создана: {created_at}\n"
-            text += f"   [ID: {mailing['id']}]\n\n"
+        # Форматируем текст
+        text, current_mailings = _format_mailings_list(mailings, page, total_pages, "Архив", db)
         
         # Создаем клавиатуру с пагинацией
         keyboard = InlineKeyboardBuilder()
         
         for mailing in current_mailings:
-            button_text = f"📝 {mailing['title'][:20]}..."
-            if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                button_text = f"🔤 {mailing['trigger_word']}"
+            button_text = get_mailing_button_text(mailing)
             
             keyboard.add(InlineKeyboardButton(
                 text=button_text,
@@ -434,18 +400,7 @@ async def mailings_archive(callback: CallbackQuery):
         pagination_keyboard = get_pagination_keyboard(page, total_pages, "mailings_archive")
         
         # Объединяем клавиатуры
-        combined_keyboard = InlineKeyboardBuilder()
-        for button in keyboard.export():
-            combined_keyboard.add(button)
-        
-        if pagination_keyboard.inline_keyboard:
-            for button in pagination_keyboard.inline_keyboard[0]:
-                combined_keyboard.add(InlineKeyboardButton(
-                    text=button.text,
-                    callback_data=button.callback_data
-                ))
-        
-        combined_keyboard.adjust(1, 3)
+        combined_keyboard = combine_keyboards(keyboard, pagination_keyboard)
         
         await callback.message.edit_text(
             text,
@@ -487,7 +442,9 @@ async def mailings_send(callback: CallbackQuery):
             # Добавляем иконку кодового слова к названию
             mailing_title = mailing['title'][:30] + "..." if len(mailing['title']) > 30 else mailing['title']
             if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
-                mailing_title = f"🔤 {mailing['trigger_word']} ({mailing_title})"
+                trigger_word = mailing.get('trigger_word')
+                if trigger_word and trigger_word.strip():
+                    mailing_title = f"🔤 {trigger_word} ({mailing_title})"
             
             keyboard.add(InlineKeyboardButton(
                 text=f"📨 {mailing_title}",
@@ -538,11 +495,12 @@ async def select_mailing_target(callback: CallbackQuery):
         new_week = db.get_new_users_count_week()
         new_month = db.get_new_users_count_month()
         
-        # Добавляем информация о кодовом слове
+        # Добавляем информацию о кодовом слове
         trigger_info = ""
-        if mailing.get('is_trigger_mailing') and mailing.get('trigger_word'):
+        trigger_word = mailing.get('trigger_word')
+        if trigger_word and trigger_word.strip():
             stats = db.get_mailing_stats(mailing_id)
-            trigger_info = f"\n🔤 <b>Кодовое слово:</b> {mailing['trigger_word']}\n📊 <b>Отправок:</b> {stats['delivered']}"
+            trigger_info = f"\n🔤 <b>Кодовое слово:</b> {trigger_word}\n📊 <b>Отправок:</b> {stats['delivered']}"
         
         await callback.message.edit_text(
             f"🎯 <b>Выбор целевой группы</b>\n\n"
@@ -564,7 +522,7 @@ async def select_mailing_target(callback: CallbackQuery):
         )
     await callback.answer()
 
-# Запуск рассылки - ВАЖНОЕ ИСПРАВЛЕНИЕ
+# Запуск рассылки - ИСПРАВЛЕННЫЙ ПАРСИНГ
 @router.callback_query(F.data.startswith("target:"))
 async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot, state: FSMContext):
     """Запуск рассылки"""
@@ -583,8 +541,8 @@ async def start_mailing_broadcast(callback: CallbackQuery, bot: Bot, state: FSMC
             
         target_group = data_parts[1]  # all, active, new_week, new_month
         
-        # Получаем mailing_id из оставшейся части (может содержать дополнительные двоеточия)
-        mailing_id_str = ":".join(data_parts[2:])
+        # Получаем mailing_id (только третья часть)
+        mailing_id_str = data_parts[2]
         if not mailing_id_str.isdigit():
             await callback.answer("❌ Неверный ID рассылки")
             return
@@ -1234,7 +1192,7 @@ async def storage_stats(callback: CallbackQuery):
         
         stats = media_storage.get_storage_stats()
         
-        # Форматируем информация о типах файлов
+        # Форматируем информацию о типах файлов
         file_types_info = ""
         for file_type, count in stats.get('file_types', {}).items():
             file_types_info += f"   • {file_type}: {count} файлов\n"

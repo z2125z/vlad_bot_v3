@@ -74,10 +74,12 @@ async def send_default_welcome(message: Message):
         welcome_text += "Введите одно из слов чтобы получить информацию:\n"
         for mailing in trigger_mailings:
             if mailing and mailing.get('trigger_word'):
-                # Безопасное экранирование HTML
-                safe_word = html.escape(mailing['trigger_word'])
-                safe_title = html.escape(mailing.get('title', 'Без названия'))
-                welcome_text += f"• <code>{safe_word}</code> - {safe_title}\n"
+                trigger_word = mailing.get('trigger_word')
+                # Проверяем, что trigger_word не None и не пустой
+                if trigger_word and trigger_word.strip():
+                    safe_word = html.escape(trigger_word)
+                    safe_title = html.escape(mailing.get('title', 'Без названия'))
+                    welcome_text += f"• <code>{safe_word}</code> - {safe_title}\n"
     else:
         welcome_text += "🔤 <b>Примеры кодовых слов:</b>\n"
         welcome_text += "• <code>прайс</code> - наши цены\n"
@@ -98,10 +100,12 @@ async def cmd_help(message: Message):
         if trigger_mailings:
             for mailing in trigger_mailings:
                 if mailing and mailing.get('trigger_word'):
-                    # Безопасное экранирование HTML
-                    safe_word = html.escape(mailing['trigger_word'])
-                    safe_title = html.escape(mailing.get('title', 'Без названия'))
-                    help_text += f"• <code>{safe_word}</code> - {safe_title}\n"
+                    trigger_word = mailing.get('trigger_word')
+                    # Проверяем, что trigger_word не None и не пустой
+                    if trigger_word and trigger_word.strip():
+                        safe_word = html.escape(trigger_word)
+                        safe_title = html.escape(mailing.get('title', 'Без названия'))
+                        help_text += f"• <code>{safe_word}</code> - {safe_title}\n"
         else:
             help_text += "• <code>прайс</code> - наши цены\n"
             help_text += "• <code>услуги</code> - список услуг\n"

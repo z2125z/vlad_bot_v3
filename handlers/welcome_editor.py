@@ -34,10 +34,12 @@ async def edit_welcome_start(callback: CallbackQuery, state: FSMContext):
         trigger_info = "\n\n🔤 <b>Активные кодовые слова:</b>\n"
         for mailing in trigger_mailings:
             if mailing and mailing.get('trigger_word'):
-                # Безопасное экранирование HTML
-                safe_word = html.escape(mailing['trigger_word'])
-                safe_title = html.escape(mailing.get('title', 'Без названия'))
-                trigger_info += f"• <code>{safe_word}</code> - {safe_title}\n"
+                trigger_word = mailing.get('trigger_word')
+                # Проверяем, что trigger_word не None и не пустой
+                if trigger_word and trigger_word.strip():
+                    safe_word = html.escape(trigger_word)
+                    safe_title = html.escape(mailing.get('title', 'Без названия'))
+                    trigger_info += f"• <code>{safe_word}</code> - {safe_title}\n"
     
     if current_welcome:
         # Обрезаем текст для отображения
@@ -81,15 +83,18 @@ async def trigger_words_list(callback: CallbackQuery):
         text = "🔤 <b>Активные кодовые слова:</b>\n\n"
         for mailing in trigger_mailings:
             if mailing and mailing.get('trigger_word'):
-                stats = db.get_mailing_stats(mailing['id'])
-                # Безопасное экранирование HTML
-                safe_word = html.escape(mailing['trigger_word'])
-                safe_title = html.escape(mailing.get('title', 'Без названия'))
-                message_preview = html.escape(mailing.get('message_text', '')[:50])
-                
-                text += f"• <b>{safe_word}</b> - {safe_title}\n"
-                text += f"  📊 Отправлено: {stats.get('delivered', 0)} раз\n"
-                text += f"  📝 Текст: {message_preview}...\n\n"
+                trigger_word = mailing.get('trigger_word')
+                # Проверяем, что trigger_word не None и не пустой
+                if trigger_word and trigger_word.strip():
+                    stats = db.get_mailing_stats(mailing['id'])
+                    # Безопасное экранирование HTML
+                    safe_word = html.escape(trigger_word)
+                    safe_title = html.escape(mailing.get('title', 'Без названия'))
+                    message_preview = html.escape(mailing.get('message_text', '')[:50])
+                    
+                    text += f"• <b>{safe_word}</b> - {safe_title}\n"
+                    text += f"  📊 Отправлено: {stats.get('delivered', 0)} раз\n"
+                    text += f"  📝 Текст: {message_preview}...\n\n"
     
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     keyboard = InlineKeyboardBuilder()
@@ -119,8 +124,11 @@ async def welcome_edit_text_start(callback: CallbackQuery, state: FSMContext):
         example_trigger_words = "\n\n🔤 <b>Доступные кодовые слова для примера:</b>\n"
         for mailing in trigger_mailings[:3]:  # Показываем первые 3
             if mailing and mailing.get('trigger_word'):
-                safe_word = html.escape(mailing['trigger_word'])
-                example_trigger_words += f"• <code>{safe_word}</code>\n"
+                trigger_word = mailing.get('trigger_word')
+                # Проверяем, что trigger_word не None и не пустой
+                if trigger_word and trigger_word.strip():
+                    safe_word = html.escape(trigger_word)
+                    example_trigger_words += f"• <code>{safe_word}</code>\n"
     
     # Безопасное отображение текущего текста
     current_text = ""

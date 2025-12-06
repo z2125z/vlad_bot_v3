@@ -348,25 +348,6 @@ async def save_mailing_draft(callback: CallbackQuery, state: FSMContext):
         logger.error(f"Error saving draft: {e}")
         await callback.answer("❌ Ошибка при сохранении")
 
-# Активация рассылки
-@router.callback_query(F.data.startswith("activate_mailing_"))
-async def activate_mailing(callback: CallbackQuery, state: FSMContext):
-    try:
-        mailing_id = int(callback.data.replace("activate_mailing_", ""))
-        db.change_mailing_status(mailing_id, "active")
-        await state.clear()
-        
-        await callback.answer("✅ Рассылка активирована")
-        await callback.message.answer(
-            "✅ Рассылка активирована и готова к отправке\n\n"
-            "Теперь вы можете отправить её через раздел 'Отправить рассылку'",
-            reply_markup=get_back_keyboard("admin_mailings")
-        )
-        logger.log_admin_action(callback.from_user.id, f"activated mailing {mailing_id}")
-    except Exception as e:
-        logger.error(f"Error activating mailing: {e}")
-        await callback.answer("❌ Ошибка при активации")
-
 # Отправка рассылки сразу
 @router.callback_query(F.data.startswith("send_now_"))
 async def send_mailing_now(callback: CallbackQuery, state: FSMContext, bot: Bot):
@@ -731,40 +712,6 @@ async def edit_mailing_show_final(update, state: FSMContext):
     
     await state.clear()
 
-# Архивирование рассылки
-@router.callback_query(F.data.startswith("archive_mailing_"))
-async def archive_mailing(callback: CallbackQuery):
-    try:
-        mailing_id = int(callback.data.replace("archive_mailing_", ""))
-        db.change_mailing_status(mailing_id, "archived")
-        
-        await callback.answer("✅ Рассылка перемещена в архив")
-        await callback.message.answer(
-            "✅ Рассылка перемещена в архив",
-            reply_markup=get_back_keyboard("admin_mailings")
-        )
-        logger.log_admin_action(callback.from_user.id, f"archived mailing {mailing_id}")
-    except Exception as e:
-        logger.error(f"Error archiving mailing: {e}")
-        await callback.answer("❌ Ошибка при архивировании")
-
-# Удаление рассылки
-@router.callback_query(F.data.startswith("delete_mailing_"))
-async def delete_mailing(callback: CallbackQuery):
-    try:
-        mailing_id = int(callback.data.replace("delete_mailing_", ""))
-        db.change_mailing_status(mailing_id, "deleted")
-        
-        await callback.answer("✅ Рассылка удалена")
-        await callback.message.answer(
-            "✅ Рассылка удалена",
-            reply_markup=get_back_keyboard("admin_mailings")
-        )
-        logger.log_admin_action(callback.from_user.id, f"deleted mailing {mailing_id}")
-    except Exception as e:
-        logger.error(f"Error deleting mailing: {e}")
-        await callback.answer("❌ Ошибка при удалении")
-
 # Пропуск редактирования медиа
 @router.callback_query(F.data.startswith("skip_edit_"))
 async def skip_edit_media(callback: CallbackQuery, state: FSMContext):
@@ -776,3 +723,8 @@ async def skip_edit_media(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Error skipping edit: {e}")
         await callback.answer("❌ Ошибка")
+
+# УДАЛИЛ ДУБЛИРУЮЩИЕСЯ ФУНКЦИИ:
+# @router.callback_query(F.data.startswith("activate_mailing_")) - ЕСТЬ В admin.py
+# @router.callback_query(F.data.startswith("archive_mailing_")) - ЕСТЬ В admin.py
+# @router.callback_query(F.data.startswith("delete_mailing_")) - ЕСТЬ В admin.py
